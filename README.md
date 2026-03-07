@@ -95,6 +95,11 @@ pytest --cov=mcp_relay --cov-report=html
 - Python >= 3.13
 - Ollama running locally (for integration tests)
 
+## Roadmap
+
+See [ENHANCEMENTS.md](ENHANCEMENTS.md) for the full backlog of planned features,
+research directions, and open questions.
+
 ## License
 
 MIT

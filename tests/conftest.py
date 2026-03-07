@@ -105,12 +105,43 @@ def mock_tools():
 # Ollama model inventory
 # ------------------------------------------------------------------
 
+# Models confirmed to support tool calling — use for integration tests
 TOOL_CAPABLE_MODELS = [
-    "llama3.2:latest",
-    "qwen2.5:latest",
-    "Llama3.1:8b",
-    "gemma3:4b",
-    "gemma3:12b",
+    "llama3.2:latest",    # 2.0GB  — fastest loader, smoke tests
+    "qwen2.5:latest",     # 4.7GB  — reliable tool caller, Qwen2 baseline
+    "Llama3.1:8b",        # 4.9GB  — good general baseline
+    "qwen3.5:latest",     # 6.6GB  — Qwen3 5B, hybrid thinking mode capable
+    "gemma3:4b",          # 3.3GB  — different architecture
+    "gemma3:12b",         # 8.1GB  — heavier tests
+]
+
+# Models that should NOT be used for tool calling
+NON_TOOL_MODELS = [
+    "deepseek-r1:7b",
+    "deepseek-r1:8b",
+    "deepseek-r1:14b",
+    "deepseek-r1:32b",            # Ollama templates missing tool call support
+    "mxbai-embed-large:latest",   # embedding only
+    "llama3.2-vision:11b",        # vision model
+    "llava:13b",                  # vision model
+    "llama3.3:latest",            # 42.5GB — too slow for routine tests
+]
+
+# Models with hybrid thinking mode (chain-of-thought toggle)
+# Expect higher latency variance and larger payloads in thinking mode
+THINKING_CAPABLE_MODELS = [
+    "qwen3.5:latest",             # /think vs /no_think prefix
+    "deepseek-r1:7b",
+    "deepseek-r1:8b",
+    "deepseek-r1:14b",
+    "deepseek-r1:32b",
+]
+
+# Cloud-routed models (0GB local, require external connectivity)
+CLOUD_MODELS = [
+    "deepseek-v3.2:cloud",
+    "gemini-3-pro-preview:latest",
+    "glm-4.7:cloud",
 ]
 
 ALL_LOCAL_MODELS = [
@@ -121,5 +152,6 @@ ALL_LOCAL_MODELS = [
     "hf.co/unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF:F16",
     "Llama3.1:8b", "Llama3.1:latest", "llama3.2-vision:11b", "llama3.2:latest",
     "llama3.3:latest", "llava:13b", "mxbai-embed-large:latest",
-    "nemotron-3-nano:latest", "qwen2.5:latest", "x/z-image-turbo:latest",
+    "nemotron-3-nano:latest", "qwen2.5:latest", "qwen3.5:latest",
+    "x/z-image-turbo:latest",
 ]
