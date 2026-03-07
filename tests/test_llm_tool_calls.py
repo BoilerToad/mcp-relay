@@ -76,6 +76,35 @@ def get_available_models() -> list[str]:
         return []
 
 
+def model_supports_tools(model: str) -> bool:
+    """
+    Probe whether a model supports the Ollama tools API.
+
+    Sends a minimal chat request with a dummy tool definition. If Ollama
+    raises ResponseError with "does not support tools", returns False.
+    Any other response (including tool_calls=None) is treated as capable.
+    """
+    try:
+        ollama.chat(
+            model=model,
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{
+                "type": "function",
+                "function": {
+                    "name": "_probe",
+                    "description": "probe",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }],
+        )
+        return True
+    except Exception as e:
+        if "does not support tools" in str(e):
+            return False
+        # Unexpected error — assume capable so it fails visibly rather than silently skips
+        return True
+
+
 PREFERRED_MODELS = [
     "llama3.2:latest",
     "qwen2.5:latest",
@@ -205,6 +234,11 @@ def research_model(request):
     model = pick_model(requested)
     if not model:
         pytest.skip("No tool-capable model available")
+    if not model_supports_tools(model):
+        pytest.skip(
+            f"Model '{model}' does not support the Ollama tools API. "
+            f"Pull a tool-capable model (qwen2.5, llama3.2, etc.)."
+        )
     print(f"\n[corpus] Model: {model}")
     return model
 
