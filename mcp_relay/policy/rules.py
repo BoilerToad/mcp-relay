@@ -11,7 +11,7 @@ Built-in rules
 --------------
 SSRFRule        Block requests to private/link-local/loopback IP ranges and
                 reserved hostnames (169.254.0.0/16, 10/8, 172.16/12, 192.168/16,
-                127.0.0.0/8, ::1, metadata hostnames).
+                127.0.0.0/8, ::1, metadata hostnames, localhost).
 
 AllowlistRule   Only permit URLs whose host matches an explicit allowlist.
                 If the allowlist is empty, all hosts are permitted (open policy).
@@ -25,7 +25,6 @@ DryRunRule      Always WARN, never BLOCK — useful for observability-only mode.
 from __future__ import annotations
 
 import ipaddress
-import re
 from abc import ABC, abstractmethod
 from typing import Any
 from urllib.parse import urlparse
@@ -50,12 +49,15 @@ _PRIVATE_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
     ipaddress.ip_network("fe80::/10"),           # IPv6 link-local
 ]
 
-# Metadata hostnames that should never be reachable
-_METADATA_HOSTNAMES: set[str] = {
+# Hostnames that must always be blocked regardless of IP resolution.
+# Includes metadata endpoints AND loopback aliases.
+_BLOCKED_HOSTNAMES: set[str] = {
+    "localhost",                        # loopback alias — always blocked
+    "localhost.localdomain",
     "metadata.google.internal",
     "metadata.goog",
-    "169.254.169.254",          # AWS / GCP / Azure metadata literal
-    "instance-data",            # Digital Ocean
+    "169.254.169.254",                  # AWS / GCP / Azure metadata literal
+    "instance-data",                    # Digital Ocean
 }
 
 
@@ -80,8 +82,8 @@ def _parse_host(url: str) -> str | None:
 
 
 def _is_private_host(host: str) -> bool:
-    """Return True if host resolves to or IS a private/reserved address."""
-    if host in _METADATA_HOSTNAMES:
+    """Return True if host is a blocked hostname or a private/reserved IP."""
+    if host.lower() in _BLOCKED_HOSTNAMES:
         return True
     # Numeric IP check
     try:
@@ -134,7 +136,7 @@ class SSRFRule(BaseRule):
         extra_blocked_hosts: list[str] | None = None,
     ) -> None:
         self._action = action
-        self._extra: set[str] = set(extra_blocked_hosts or [])
+        self._extra: set[str] = {h.lower() for h in (extra_blocked_hosts or [])}
 
     def check(self, tool_name: str, arguments: dict[str, Any]) -> PolicyDecision:
         url = _extract_url(arguments)
@@ -145,7 +147,7 @@ class SSRFRule(BaseRule):
         if host is None:
             return PolicyDecision.allow(self.name)
 
-        blocked = _is_private_host(host) or host in self._extra
+        blocked = _is_private_host(host) or host.lower() in self._extra
         if not blocked:
             return PolicyDecision.allow(self.name)
 
