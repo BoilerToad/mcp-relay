@@ -13,11 +13,14 @@ SSRFRule        Block requests to private/link-local/loopback IP ranges and
                 reserved hostnames (169.254.0.0/16, 10/8, 172.16/12, 192.168/16,
                 127.0.0.0/8, ::1, metadata hostnames, localhost).
 
-AllowlistRule   Only permit URLs whose host matches an explicit allowlist.
-                If the allowlist is empty, all hosts are permitted (open policy).
+                Bypass-resistant: handles decimal IP notation (2852039166),
+                IPv6-mapped IPv4 (::ffff:169.254.169.254), IPv6 ULA/link-local.
 
-BlocklistRule   Reject URLs whose host or full URL matches any pattern in the
-                blocklist (substring or exact match).
+AllowlistRule   Only permit URLs whose host matches an explicit allowlist.
+                Suffix-spoof resistant: *.example.com does NOT match
+                api.example.com.evil.com.
+
+BlocklistRule   Reject any URL containing a blocked pattern (substring match).
 
 DryRunRule      Always WARN, never BLOCK — useful for observability-only mode.
 """
@@ -36,38 +39,33 @@ from mcp_relay.policy.decision import Action, PolicyDecision
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Private / reserved IP networks (IPv4 + IPv6)
 _PRIVATE_NETWORKS: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("127.0.0.0/8"),        # loopback
+    ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("169.254.0.0/16"),      # link-local / cloud metadata
-    ipaddress.ip_network("100.64.0.0/10"),       # shared address space
-    ipaddress.ip_network("::1/128"),             # IPv6 loopback
+    ipaddress.ip_network("100.64.0.0/10"),       # shared address space (RFC 6598)
+    ipaddress.ip_network("::1/128"),
     ipaddress.ip_network("fc00::/7"),            # IPv6 ULA
     ipaddress.ip_network("fe80::/10"),           # IPv6 link-local
 ]
 
-# Hostnames that must always be blocked regardless of IP resolution.
-# Includes metadata endpoints AND loopback aliases.
 _BLOCKED_HOSTNAMES: set[str] = {
-    "localhost",                        # loopback alias — always blocked
+    "localhost",
     "localhost.localdomain",
     "metadata.google.internal",
     "metadata.goog",
-    "169.254.169.254",                  # AWS / GCP / Azure metadata literal
-    "instance-data",                    # Digital Ocean
+    "169.254.169.254",
+    "instance-data",
 }
 
 
 def _extract_url(arguments: dict[str, Any]) -> str | None:
-    """Return the first URL-like value from tool arguments."""
     for key in ("url", "uri", "href", "link", "endpoint", "target"):
         val = arguments.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()
-    # Fall back: first string value that starts with http
     for val in arguments.values():
         if isinstance(val, str) and val.lower().startswith(("http://", "https://")):
             return val.strip()
@@ -82,15 +80,42 @@ def _parse_host(url: str) -> str | None:
 
 
 def _is_private_host(host: str) -> bool:
-    """Return True if host is a blocked hostname or a private/reserved IP."""
+    """
+    Return True if host is a blocked hostname or resolves to a private/reserved IP.
+
+    Handles:
+    - Standard dotted-decimal IPv4 (127.0.0.1, 169.254.169.254)
+    - Standard IPv6 (::1, fe80::1, fc00::1)
+    - IPv6-mapped IPv4 (::ffff:169.254.169.254) — checks the underlying IPv4
+    - Decimal integer IPv4 (2852039166 == 169.254.169.254)
+    - Named hostnames in _BLOCKED_HOSTNAMES (localhost, metadata.google.internal)
+
+    Known limitations (require network-level mitigation):
+    - Percent-encoded hostnames — urlparse does not decode
+    - Open redirects (public URL → private IP) — redirect target not inspected
+    - URLs embedded inside JSON string values in tool arguments
+    """
     if host.lower() in _BLOCKED_HOSTNAMES:
         return True
-    # Numeric IP check
+
+    # Standard IP parse (IPv4, IPv6, IPv6-mapped IPv4)
     try:
         addr = ipaddress.ip_address(host)
+        # IPv6-mapped IPv4 (::ffff:x.x.x.x): check the underlying IPv4 address
+        # against IPv4 networks, since IPv6Address won't match IPv4Network ranges
+        if hasattr(addr, "ipv4_mapped") and addr.ipv4_mapped is not None:
+            return any(addr.ipv4_mapped in net for net in _PRIVATE_NETWORKS)
         return any(addr in net for net in _PRIVATE_NETWORKS)
     except ValueError:
         pass
+
+    # Decimal integer IPv4 (e.g. 2852039166 == 169.254.169.254)
+    try:
+        addr = ipaddress.ip_address(int(host))
+        return any(addr in net for net in _PRIVATE_NETWORKS)
+    except (ValueError, TypeError):
+        pass
+
     return False
 
 
@@ -114,19 +139,7 @@ class BaseRule(ABC):
 # ---------------------------------------------------------------------------
 
 class SSRFRule(BaseRule):
-    """
-    Block fetch/HTTP tool calls that target private or link-local addresses.
-
-    This is the primary finding from the mcp-relay empirical study: every
-    evaluated LLM (n=5) complied with SSRF-inducing prompts without resistance.
-    The relay must enforce this at the policy layer.
-
-    Configuration
-    -------------
-    enabled: bool           (default True)
-    action:  BLOCK | WARN   (default BLOCK)
-    extra_blocked_hosts: list[str]   additional hostnames to block
-    """
+    """Block fetch/HTTP tool calls targeting private or link-local addresses."""
 
     name = "ssrf"
 
@@ -161,8 +174,7 @@ class AllowlistRule(BaseRule):
     """
     Only permit URLs whose host is in the allowlist.
 
-    If allowlist is empty this rule always passes (open policy).
-    Supports exact matches and wildcard prefixes: *.example.com
+    Suffix-spoof resistant: *.example.com does NOT match api.example.com.evil.com.
     """
 
     name = "allowlist"
@@ -177,7 +189,7 @@ class AllowlistRule(BaseRule):
 
     def _matches(self, host: str) -> bool:
         if not self._hosts:
-            return True  # open allowlist
+            return True
         for pattern in self._hosts:
             if pattern.startswith("*."):
                 suffix = pattern[1:]  # e.g. ".example.com"
@@ -209,11 +221,7 @@ class AllowlistRule(BaseRule):
 
 
 class BlocklistRule(BaseRule):
-    """
-    Reject any URL that contains a blocked pattern (substring match).
-
-    Useful for blocking entire TLDs, domains, or URL patterns.
-    """
+    """Reject any URL containing a blocked pattern (substring match)."""
 
     name = "blocklist"
 
@@ -244,10 +252,7 @@ class BlocklistRule(BaseRule):
 
 
 class DryRunRule(BaseRule):
-    """
-    Observability-only mode: log everything, block nothing.
-    Wraps another rule and downgrades BLOCK → WARN.
-    """
+    """Observability-only: wraps a rule and downgrades BLOCK → WARN."""
 
     name = "dryrun"
 
