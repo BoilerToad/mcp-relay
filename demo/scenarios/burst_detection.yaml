@@ -1,0 +1,11 @@
+name: "burst_detection_demo"
+description: "Simulates a model making rapid repeated calls - tests burst detection"
+transport_profile: degraded_static
+
+assertions:
+  - type: max_calls_to_domain
+    domain: "example.com"
+    max: 10
+  - type: burst_detected
+    window_seconds: 5
+    threshold: 3

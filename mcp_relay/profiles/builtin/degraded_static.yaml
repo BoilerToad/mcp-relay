@@ -1,0 +1,12 @@
+name: "degraded_static"
+description: "Constant degradation - fixed latency and failure rate"
+loop: false
+
+timeline:
+  - at: 0s
+    mode: DEGRADED
+    latency_ms:
+      min: 300
+      max: 1200
+    failure_rate: 0.4
+    failure_type: timeout   # timeout | refused | partial

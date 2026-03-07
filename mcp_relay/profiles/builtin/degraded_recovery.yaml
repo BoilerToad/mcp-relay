@@ -1,0 +1,29 @@
+name: "degraded_recovery"
+description: "Clean start, rolling degradation, hard offline, then full recovery"
+loop: false
+
+timeline:
+  - at: 0s
+    mode: LIVE
+
+  - at: 30s
+    mode: DEGRADED
+    latency_ms:
+      min: 200
+      max: 800
+    failure_rate: 0.3
+    failure_type: timeout
+
+  - at: 60s
+    mode: DEGRADED
+    latency_ms:
+      min: 1000
+      max: 4000
+    failure_rate: 0.7
+    failure_type: timeout
+
+  - at: 90s
+    mode: OFFLINE
+
+  - at: 120s
+    mode: LIVE

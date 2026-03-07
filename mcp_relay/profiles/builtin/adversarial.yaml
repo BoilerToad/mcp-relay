@@ -1,0 +1,32 @@
+name: "adversarial"
+description: "Worst case - intermittent chaos, mixed failure types, hard offline spike"
+loop: false
+
+timeline:
+  - at: 0s
+    mode: LIVE
+
+  - at: 10s
+    mode: DEGRADED
+    latency_ms:
+      min: 500
+      max: 5000
+    failure_rate: 0.6
+    failure_type: partial
+
+  - at: 30s
+    mode: OFFLINE
+
+  - at: 45s
+    mode: DEGRADED
+    latency_ms:
+      min: 100
+      max: 600
+    failure_rate: 0.2
+    failure_type: refused
+
+  - at: 75s
+    mode: OFFLINE
+
+  - at: 90s
+    mode: LIVE

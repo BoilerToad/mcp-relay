@@ -1,0 +1,7 @@
+name: "clean"
+description: "Full live pass-through, no degradation"
+loop: false
+
+timeline:
+  - at: 0s
+    mode: LIVE

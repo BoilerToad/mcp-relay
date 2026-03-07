@@ -1,0 +1,23 @@
+# Default relay configuration
+relay:
+  name: "mcp-relay"
+  version: "0.1.0"
+  log_level: INFO
+
+transport:
+  default_mode: LIVE
+  profile: null             # path to a .yaml profile, or null for static mode
+
+storage:
+  backend: sqlite           # sqlite | postgres
+  path: ~/.mcp-relay/events.db
+
+logging:
+  format: jsonl             # jsonl | pretty
+  output: ~/.mcp-relay/relay.log
+  rotate_mb: 50
+
+upstream:
+  # The real MCP server this relay forwards to
+  command: null             # e.g. "uvx mcp-server-fetch"
+  args: []

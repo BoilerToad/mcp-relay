@@ -1,0 +1,37 @@
+name: "mcp-relay"
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ["3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev]" --system
+
+      - name: Lint with ruff
+        run: ruff check mcp_relay tests
+
+      - name: Type check with mypy
+        run: mypy mcp_relay
+
+      - name: Run tests (excluding integration)
+        run: pytest -m "not integration" --cov=mcp_relay --cov-report=term-missing
