@@ -154,9 +154,10 @@ class SQLiteStorage(StorageBackend):
     # ------------------------------------------------------------------
 
     def create_session(self, session: SessionRecord) -> None:
+        """Upsert a session row. Re-runs with the same session_id overwrite."""
         self._db.execute(
             """
-            INSERT INTO sessions
+            INSERT OR REPLACE INTO sessions
                 (session_id, started_at, ended_at, model_name,
                  transport_profile, upstream_command, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -170,6 +171,12 @@ class SQLiteStorage(StorageBackend):
                 session.upstream_command,
                 session.notes,
             ),
+        )
+
+    def delete_events_for_session(self, session_id: str) -> None:
+        """Delete all events linked to a session — call before re-recording."""
+        self._db.execute(
+            "DELETE FROM events WHERE session_id = ?", (session_id,)
         )
 
     def end_session(self, session_id: str, ended_at: str) -> None:
@@ -281,7 +288,6 @@ class SQLiteStorage(StorageBackend):
 
         results = []
         for r in rows:
-            # Compute stddev manually (sqlite3 has no STDDEV built-in)
             latencies = [
                 row[0]
                 for row in self._db.execute(
@@ -297,11 +303,11 @@ class SQLiteStorage(StorageBackend):
             ]
             stddev = _stddev(latencies)
             results.append({
-                "model_name":       r["model_name"],
-                "total_calls":      r["total_calls"],
-                "avg_latency_ms":   round(r["avg_latency_ms"] or 0, 3),
-                "min_latency_ms":   round(r["min_latency_ms"] or 0, 3),
-                "max_latency_ms":   round(r["max_latency_ms"] or 0, 3),
+                "model_name":        r["model_name"],
+                "total_calls":       r["total_calls"],
+                "avg_latency_ms":    round(r["avg_latency_ms"] or 0, 3),
+                "min_latency_ms":    round(r["min_latency_ms"] or 0, 3),
+                "max_latency_ms":    round(r["max_latency_ms"] or 0, 3),
                 "stddev_latency_ms": round(stddev, 3),
             })
         return results
@@ -365,21 +371,18 @@ class SQLiteStorage(StorageBackend):
     # ------------------------------------------------------------------
 
     def table_names(self) -> list[str]:
-        """Return list of user table names in the database."""
         rows = self._db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         ).fetchall()
         return [r[0] for r in rows]
 
     def index_names(self) -> list[str]:
-        """Return list of index names in the database."""
         rows = self._db.execute(
             "SELECT name FROM sqlite_master WHERE type='index' ORDER BY name"
         ).fetchall()
         return [r[0] for r in rows]
 
     def column_names(self, table: str) -> list[str]:
-        """Return column names for a given table."""
         rows = self._db.execute(f"PRAGMA table_info({table})").fetchall()
         return [r[1] for r in rows]
 
