@@ -16,6 +16,23 @@ from mcp_relay.transport import TransportMode
 
 
 # ------------------------------------------------------------------
+# CLI options (must live in conftest.py for pytest to pick them up)
+# ------------------------------------------------------------------
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--model",
+        default=None,
+        help="Ollama model to use for integration tests (default: auto-select)",
+    )
+    parser.addoption(
+        "--db",
+        default=str(Path("~/.mcp-relay/research.db").expanduser()),
+        help="SQLite database path for research results",
+    )
+
+
+# ------------------------------------------------------------------
 # Config fixtures
 # ------------------------------------------------------------------
 
@@ -128,9 +145,8 @@ NON_TOOL_MODELS = [
 ]
 
 # Models with hybrid thinking mode (chain-of-thought toggle)
-# Expect higher latency variance and larger payloads in thinking mode
 THINKING_CAPABLE_MODELS = [
-    "qwen3.5:latest",             # /think vs /no_think prefix
+    "qwen3.5:latest",
     "deepseek-r1:7b",
     "deepseek-r1:8b",
     "deepseek-r1:14b",
