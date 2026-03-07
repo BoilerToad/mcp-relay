@@ -1,0 +1,24 @@
+# mcp-relay default study — quick smoke test
+# 5 confirmed tool-capable models, 1 run each
+# For the full 3-run multi-model study use: python scripts/run_study.py --study studies/full_study.yaml
+
+study:
+  name: "default"
+  description: "Quick smoke test — 5 confirmed models, 1 run each"
+  runs_per_model: 1
+
+models:
+  - name: qwen2.5:latest
+    enabled: true
+  - name: qwen3.5:latest
+    enabled: true
+  - name: gpt-oss:20b
+    enabled: true
+  - name: glm-4.7-flash:latest
+    enabled: true
+  - name: llama3.2:latest
+    enabled: true
+
+db: null
+tiers: null
+extra_pytest_args: []

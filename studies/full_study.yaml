@@ -1,0 +1,77 @@
+# mcp-relay full study configuration
+# All models pulled as of March 2026 — annotated with tool-call compatibility
+# Run with: python scripts/run_study.py --study studies/full_study.yaml
+
+study:
+  name: "full_study"
+  description: "All downloaded models — 3 runs each, tool-capable only"
+  runs_per_model: 3
+
+# Compatibility legend:
+#   enabled: true   — tool-call capable, include in study
+#   enabled: false  — incompatible or excluded (reason noted)
+
+models:
+
+  # ── Confirmed tool-capable, previously tested ──────────────────────────
+  - name: qwen2.5:latest          # 4.7GB  | Alibaba | CAPABLE WITH RISK
+    enabled: true
+  - name: qwen3.5:latest          # 6.6GB  | Alibaba | CAPABLE WITH RISK, hybrid thinking
+    enabled: true
+  - name: gpt-oss:20b             # 13.8GB | OpenAI  | CAPABLE WITH RISK
+    enabled: true
+  - name: glm-4.7-flash:latest    # 19.0GB | ZHIPU AI | CAPABLE WITH RISK
+    enabled: true
+  - name: llama3.2:latest         # 2.0GB  | Meta    | UNRELIABLE (T4 fails)
+    enabled: true
+  - name: Llama3.1:8b             # 4.9GB  | Meta    | not yet run — adds Meta size comparison
+    enabled: true
+  - name: Llama3.1:latest         # 4.9GB  | Meta    | same weights as Llama3.1:8b, likely duplicate
+    enabled: false                 # disable to avoid redundant runs — verify tag first
+
+  # ── Incompatible — no Ollama tools API support ──────────────────────────
+  - name: deepseek-r1:7b          # 4.7GB  | DeepSeek | no tools API
+    enabled: false
+  - name: deepseek-r1:8b          # 5.2GB  | DeepSeek | no tools API
+    enabled: false
+  - name: deepseek-r1:14b         # 9.0GB  | DeepSeek | no tools API
+    enabled: false
+  - name: deepseek-r1:32b         # 19.9GB | DeepSeek | no tools API
+    enabled: false
+  - name: hf.co/unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF:F16  # 16.1GB | DeepSeek distill | no tools API
+    enabled: false
+  - name: gemma3:4b               # 3.3GB  | Google  | no tools API (confirmed)
+    enabled: false
+  - name: gemma3:12b              # 8.1GB  | Google  | no tools API (unconfirmed — re-test to verify)
+    enabled: false
+  - name: gemma3:12b-beeai        # 8.1GB  | Google/BeeAI | unverified — likely no tools API
+    enabled: false
+  - name: gemma3:27b              # 17.4GB | Google  | unverified — likely no tools API
+    enabled: false
+  - name: gemma2:27b              # 15.6GB | Google  | older arch — likely no tools API
+    enabled: false
+
+  # ── Cloud-routed (0GB local — require external connectivity) ───────────
+  - name: deepseek-v3.2:cloud     # 0.0GB  | DeepSeek cloud | untested
+    enabled: false                 # enable if cloud routing is confirmed available
+  - name: glm-4.7:cloud           # 0.0GB  | ZHIPU AI cloud | untested
+    enabled: false                 # enable if cloud routing is confirmed available
+  - name: gemini-3-pro-preview:latest  # 0.0GB | Google cloud | untested
+    enabled: false
+
+  # ── Not applicable ──────────────────────────────────────────────────────
+  - name: mxbai-embed-large:latest  # 0.7GB | embedding model only — no chat
+    enabled: false
+  - name: llama3.2-vision:11b     # 7.8GB  | vision model — tool calling not tested
+    enabled: false
+  - name: llava:13b               # 8.0GB  | vision model — tool calling not tested
+    enabled: false
+  - name: llama3.3:latest         # 42.5GB | too slow for routine runs
+    enabled: false
+  - name: nemotron-3-nano:latest  # 24.3GB | NVIDIA — tool calling unverified
+    enabled: false
+
+# Optional overrides
+db: null            # null = ~/.mcp-relay/research.db
+tiers: null         # null = all tiers
+extra_pytest_args: []
