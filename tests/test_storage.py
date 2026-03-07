@@ -8,6 +8,8 @@ Validates:
   4. Data integrity     — JSON round-trips, NULL handling, FK enforcement
   5. Research queries   — latency_stats, call_counts, error_rates
   6. Multi-model data   — queries correctly partition by model
+  7. Context manager    — initialize / close lifecycle
+  8. Stddev edge cases  — lines 326, 395 in sqlite.py
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import json
 import math
 import pytest
 
-from mcp_relay.storage.sqlite import SQLiteStorage
+from mcp_relay.storage.sqlite import SQLiteStorage, _stddev
 from mcp_relay.storage.base import EventRecord, SessionRecord
 from mcp_relay.core.logging import utc_now
 
@@ -411,3 +413,56 @@ class TestContextManager:
         storage.close()
         with pytest.raises(RuntimeError, match="not initialized"):
             storage.table_names()
+
+
+# ---------------------------------------------------------------------------
+# 7. _stddev() edge cases — lines 326, 395 in sqlite.py
+# ---------------------------------------------------------------------------
+
+class TestStddev:
+    """
+    Directly tests the _stddev() helper which sqlite3 requires us to
+    compute manually (no built-in STDDEV function).
+    """
+
+    def test_empty_list_returns_zero(self):
+        """n=0: no data, stddev is undefined — must return 0.0."""
+        assert _stddev([]) == 0.0
+
+    def test_single_value_returns_zero(self):
+        """n=1: variance is undefined — must return 0.0."""
+        assert _stddev([42.0]) == 0.0
+
+    def test_identical_values_returns_zero(self):
+        """All same values → zero variance."""
+        assert _stddev([5.0, 5.0, 5.0, 5.0]) == 0.0
+
+    def test_known_values(self):
+        """[100, 200, 300] → population stddev = ~81.65."""
+        result = _stddev([100.0, 200.0, 300.0])
+        assert abs(result - 81.649) < 0.001
+
+    def test_two_values(self):
+        """Minimum n=2 case: [0, 10] → stddev = 5.0."""
+        assert _stddev([0.0, 10.0]) == 5.0
+
+    def test_returns_float(self):
+        assert isinstance(_stddev([1.0, 2.0, 3.0]), float)
+
+    def test_latency_stats_single_call_stddev_is_zero(self, db, tmp_path):
+        """
+        A model with exactly one call_end event should report stddev=0.0
+        in latency_stats() — not crash or return None.
+        """
+        s = SessionRecord(
+            session_id="single",
+            started_at=utc_now(),
+            model_name="gemma3:4b",
+        )
+        db.create_session(s)
+        db.write_event(make_event("e1", "call_end", "single", latency_ms=42.0))
+
+        stats = {r["model_name"]: r for r in db.latency_stats()}
+        assert "gemma3:4b" in stats
+        assert stats["gemma3:4b"]["stddev_latency_ms"] == 0.0
+        assert stats["gemma3:4b"]["total_calls"] == 1

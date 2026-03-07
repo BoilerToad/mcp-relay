@@ -9,8 +9,9 @@ of every event type.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -75,6 +76,27 @@ class TestCallEvent:
             )
             parsed = json.loads(event.to_jsonl())
             assert parsed["event_type"] == et.value
+
+    def test_to_event_record_round_trips_fields(self):
+        event = CallEvent(
+            event_id="rec-1",
+            event_type=EventType.CALL_END,
+            timestamp="2026-01-01T00:00:00+00:00",
+            session_id="sess-x",
+            tool_name="fetch",
+            transport_mode="live",
+            payload={"url": "https://example.com"},
+            latency_ms=99.9,
+            upstream_command="uvx mcp-server-fetch",
+            extra={"retry": 1},
+        )
+        record = event.to_event_record()
+        assert record.event_id == event.event_id
+        assert record.event_type == "call_end"
+        assert record.latency_ms == 99.9
+        assert record.payload == {"url": "https://example.com"}
+        assert record.extra == {"retry": 1}
+        assert record.upstream_command == "uvx mcp-server-fetch"
 
 
 class TestEventLogger:
@@ -142,6 +164,141 @@ class TestEventLogger:
             assert "event_id" in parsed
             assert "timestamp" in parsed
             assert "latency_ms" in parsed
+
+
+class TestEventLoggerEdgeCases:
+    """
+    Covers lines 103, 108-112, 121-122, 124-129, 132, 135 in core/logging.py:
+      - echo_stderr path
+      - storage dual-write path
+      - storage error swallow (must never crash relay)
+      - log rotation trigger
+      - context manager (__enter__ / __exit__)
+    """
+
+    def _make_event(self, event_id: str = "e1") -> CallEvent:
+        return CallEvent(
+            event_id=event_id,
+            event_type=EventType.CALL_START,
+            timestamp=utc_now(),
+            session_id="sess-echo",
+            tool_name="fetch",
+            transport_mode="live",
+        )
+
+    def test_echo_stderr_prints_to_stderr(self, tmp_path, capsys):
+        """echo_stderr=True must print the JSON line to stderr."""
+        logger = EventLogger(
+            output_path=tmp_path / "echo.log",
+            echo_stderr=True,
+        )
+        logger.log(self._make_event())
+        logger.close()
+
+        captured = capsys.readouterr()
+        assert "[relay]" in captured.err
+        assert "call_start" in captured.err
+
+    def test_no_echo_by_default(self, tmp_path, capsys):
+        """echo_stderr=False (default) must produce no stderr output."""
+        logger = EventLogger(output_path=tmp_path / "noecho.log")
+        logger.log(self._make_event())
+        logger.close()
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_storage_write_called_when_provided(self, tmp_path):
+        """EventLogger must call storage.write_event() for each logged event."""
+        mock_storage = MagicMock()
+        logger = EventLogger(
+            output_path=tmp_path / "dual.log",
+            storage=mock_storage,
+        )
+        logger.log(self._make_event("e1"))
+        logger.log(self._make_event("e2"))
+        logger.close()
+
+        assert mock_storage.write_event.call_count == 2
+
+    def test_storage_error_does_not_crash_relay(self, tmp_path, capsys):
+        """
+        A failing storage backend must NEVER propagate an exception —
+        the relay must keep logging to JSONL even if SQLite explodes.
+        This is a critical audit/governance requirement.
+        """
+        mock_storage = MagicMock()
+        mock_storage.write_event.side_effect = RuntimeError("disk full")
+
+        logger = EventLogger(
+            output_path=tmp_path / "resilient.log",
+            storage=mock_storage,
+        )
+        # Must not raise
+        logger.log(self._make_event())
+        logger.close()
+
+        # JSONL file must still have the event
+        lines = (tmp_path / "resilient.log").read_text().strip().split("\n")
+        assert len(lines) == 1
+        assert json.loads(lines[0])["event_id"] == "e1"
+
+        # Error must be reported to stderr
+        captured = capsys.readouterr()
+        assert "storage write error" in captured.err
+
+    def test_storage_error_message_contains_exception(self, tmp_path, capsys):
+        """The stderr message should include the original exception text."""
+        mock_storage = MagicMock()
+        mock_storage.write_event.side_effect = OSError("no space left on device")
+
+        logger = EventLogger(
+            output_path=tmp_path / "err_msg.log",
+            storage=mock_storage,
+        )
+        logger.log(self._make_event())
+        logger.close()
+
+        captured = capsys.readouterr()
+        assert "no space left on device" in captured.err
+
+    def test_context_manager_enter_returns_logger(self, tmp_path):
+        """__enter__ must return the logger instance itself."""
+        logger = EventLogger(output_path=tmp_path / "ctx.log")
+        with logger as l:
+            assert l is logger
+
+    def test_context_manager_exit_closes_file(self, tmp_path):
+        """__exit__ must close the underlying file handle."""
+        logger = EventLogger(output_path=tmp_path / "ctx_close.log")
+        with logger:
+            pass
+        assert logger._file.closed
+
+    def test_log_rotation_triggered_when_size_exceeded(self, tmp_path):
+        """
+        When the log file exceeds rotate_mb, the current file is renamed
+        and a new one is opened. The new file should exist and be writable.
+        """
+        log_path = tmp_path / "rotating.log"
+        # Use rotate_mb=0 so any write triggers rotation
+        logger = EventLogger(
+            output_path=log_path,
+            rotate_mb=0,
+        )
+        logger.log(self._make_event("before"))
+        # After rotation, a new file at the original path should exist
+        assert log_path.exists()
+        # At least one rotated backup should exist
+        rotated = list(tmp_path.glob("rotating.*.log"))
+        assert len(rotated) >= 1
+
+        logger.log(self._make_event("after"))
+        logger.close()
+
+        # New file should have the "after" event
+        new_lines = log_path.read_text().strip().split("\n")
+        assert any("after" in l for l in new_lines)
 
 
 class TestInterceptLogging:
