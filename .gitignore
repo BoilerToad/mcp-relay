@@ -39,3 +39,8 @@ relay_recordings/
 # Secrets
 *.env
 .env
+
+# Test run output logs
+coverage_report.txt
+integration_run.txt
+llm_test_run*.txt
