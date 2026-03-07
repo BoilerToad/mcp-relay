@@ -10,6 +10,11 @@ mirrors the upstream tool schemas exactly, and for every tool call it:
   4. Returns the response unmodified to the caller
 
 Nothing here modifies the call or response — that is the policy engine's job (v2).
+
+Return value conventions
+------------------------
+_intercept_call()    → (CallToolResult, latency_ms)   — programmatic / test path
+_handle_mcp_call()   → list[TextContent]               — MCP stdio server path
 """
 
 from __future__ import annotations
@@ -21,7 +26,6 @@ from typing import Any
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import (
-    CallToolRequest,
     CallToolResult,
     ListToolsRequest,
     TextContent,
@@ -56,7 +60,7 @@ class InterceptEngine:
         self._register_handlers()
 
     # ------------------------------------------------------------------
-    # MCP server wiring
+    # MCP server wiring (stdio server path)
     # ------------------------------------------------------------------
 
     def _register_handlers(self) -> None:
@@ -64,7 +68,6 @@ class InterceptEngine:
 
         @self._server.list_tools()
         async def handle_list_tools() -> list[Tool]:
-            # Refresh from upstream on every list request so schema changes propagate
             self._tools = await self._transport.list_tools()
             return self._tools
 
@@ -73,14 +76,26 @@ class InterceptEngine:
             name: str,
             arguments: dict[str, Any] | None,
         ) -> list[TextContent]:
-            return await self._intercept_call(name, arguments or {})
+            # MCP server expects content list, not (result, latency) tuple
+            result, _ = await self._intercept_call(name, arguments or {})
+            return result.content  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Core intercept — returns (CallToolResult, latency_ms)
+    # ------------------------------------------------------------------
 
     async def _intercept_call(
         self,
         tool_name: str,
         arguments: dict[str, Any],
-    ) -> list[TextContent]:
-        """Core intercept logic — log, forward, log, return."""
+    ) -> tuple[CallToolResult, float]:
+        """
+        Log, forward, log, return.
+
+        Returns:
+            (CallToolResult, latency_ms) — usable by both the programmatic
+            session path and the MCP stdio handler above.
+        """
         event_id = str(uuid.uuid4())
         mode = self._transport.mode.value
 
@@ -118,8 +133,7 @@ class InterceptEngine:
                 )
             )
 
-            # Return the upstream content unchanged
-            return result.content  # type: ignore[return-value]
+            return result, latency_ms
 
         except Exception as exc:
             # --- CALL_ERROR ---

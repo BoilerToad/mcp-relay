@@ -1,24 +1,9 @@
 """
 mcp_relay.relay - Top-level Relay class.
-
-Public entry point for embedding mcp-relay in any application:
-
-    from mcp_relay import Relay, RelayConfig
-
-    relay = Relay(config=RelayConfig.from_file("relay.yaml"))
-
-    # Programmatic use (tests, demo harness):
-    async with relay.session(model_name="qwen2.5:latest") as session:
-        tools  = await session.list_tools()
-        result, latency = await session.call_tool("fetch", {"url": "..."})
-
-    # Stdio server (production / Ollama integration):
-    await relay.run(model_name="llama3.2:latest")
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -39,17 +24,20 @@ log = logging.getLogger("mcp_relay")
 class RelaySession:
     """
     A live relay session — transport connected, logger open, storage active.
-    Returned by Relay.session() for programmatic use.
+    All tool calls are routed through InterceptEngine so every call is
+    logged and stored regardless of usage pattern.
     """
 
     def __init__(
         self,
+        engine: InterceptEngine,
         transport: TransportManager,
         logger: EventLogger,
         storage: SQLiteStorage,
         session_id: str,
         model_name: str | None,
     ) -> None:
+        self._engine = engine
         self._transport = transport
         self._logger = logger
         self._storage = storage
@@ -64,7 +52,8 @@ class RelaySession:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> tuple[CallToolResult, float]:
-        return await self._transport.call_tool(tool_name, arguments)
+        # Route through InterceptEngine — logs call_start + call_end/error
+        return await self._engine._intercept_call(tool_name, arguments)
 
 
 class Relay:
@@ -108,10 +97,6 @@ class Relay:
         transport_profile: str | None = None,
         notes: str | None = None,
     ) -> AsyncGenerator[RelaySession, None]:
-        """
-        Open a relay session. Transport connects, logger opens, session row
-        is written to SQLite. Cleans up and closes the session on exit.
-        """
         session_id = str(uuid.uuid4())
         started_at = utc_now()
 
@@ -134,8 +119,15 @@ class Relay:
         )
 
         async with TransportManager(self._config) as transport:
+            engine = InterceptEngine(
+                config=self._config,
+                transport=transport,
+                logger=event_logger,
+                session_id=session_id,
+            )
             try:
                 yield RelaySession(
+                    engine=engine,
                     transport=transport,
                     logger=event_logger,
                     storage=storage,
@@ -157,9 +149,6 @@ class Relay:
         transport_profile: str | None = None,
         notes: str | None = None,
     ) -> None:
-        """
-        Start the relay as an MCP stdio server. Blocks until client disconnects.
-        """
         session_id = str(uuid.uuid4())
         started_at = utc_now()
 
