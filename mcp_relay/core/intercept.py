@@ -4,12 +4,11 @@ mcp_relay.core.intercept - MCP server façade (the intercept engine).
 This is the face the LLM sees.  It presents itself as a normal MCP server,
 mirrors the upstream tool schemas exactly, and for every tool call it:
 
-  1. Emits a CALL_START event to the logger
-  2. Forwards the call via the TransportManager
-  3. Emits a CALL_END (or CALL_ERROR) event with full payload + latency
-  4. Returns the response unmodified to the caller
-
-Nothing here modifies the call or response — that is the policy engine's job (v2).
+  1. Evaluates the PolicyEngine — BLOCK raises PolicyViolationError (logged, not forwarded)
+  2. Emits a CALL_START event to the logger
+  3. Forwards the call via the TransportManager
+  4. Emits a CALL_END (or CALL_ERROR) event with full payload + latency
+  5. Returns the response unmodified to the caller
 
 Return value conventions
 ------------------------
@@ -34,6 +33,7 @@ from mcp.types import (
 
 from mcp_relay.config import RelayConfig
 from mcp_relay.core.logging import CallEvent, EventLogger, EventType, utc_now
+from mcp_relay.policy.engine import PolicyConfig, PolicyEngine, PolicyViolationError
 from mcp_relay.transport.manager import TransportManager
 
 
@@ -41,7 +41,8 @@ class InterceptEngine:
     """
     Wraps an MCP Server instance and wires it to the TransportManager.
 
-    Every tool call passes through here before and after hitting upstream.
+    Every tool call passes through the PolicyEngine before hitting upstream.
+    Blocked calls are logged and never forwarded.
     """
 
     def __init__(
@@ -50,6 +51,7 @@ class InterceptEngine:
         transport: TransportManager,
         logger: EventLogger,
         session_id: str | None = None,
+        policy: PolicyEngine | None = None,
     ) -> None:
         self._config = config
         self._transport = transport
@@ -57,6 +59,7 @@ class InterceptEngine:
         self._session_id = session_id or str(uuid.uuid4())
         self._server = Server(config.name)
         self._tools: list[Tool] = []
+        self._policy = policy or PolicyEngine.default()
         self._register_handlers()
 
     # ------------------------------------------------------------------
@@ -76,9 +79,13 @@ class InterceptEngine:
             name: str,
             arguments: dict[str, Any] | None,
         ) -> list[TextContent]:
-            # MCP server expects content list, not (result, latency) tuple
-            result, _ = await self._intercept_call(name, arguments or {})
-            return result.content  # type: ignore[return-value]
+            try:
+                result, _ = await self._intercept_call(name, arguments or {})
+                return result.content  # type: ignore[return-value]
+            except PolicyViolationError as exc:
+                # Return a structured error to the model explaining the block
+                from mcp.types import TextContent as TC
+                return [TC(type="text", text=f"[BLOCKED] {exc}")]
 
     # ------------------------------------------------------------------
     # Core intercept — returns (CallToolResult, latency_ms)
@@ -90,14 +97,35 @@ class InterceptEngine:
         arguments: dict[str, Any],
     ) -> tuple[CallToolResult, float]:
         """
-        Log, forward, log, return.
+        Policy check → log → forward → log → return.
 
-        Returns:
-            (CallToolResult, latency_ms) — usable by both the programmatic
-            session path and the MCP stdio handler above.
+        Raises PolicyViolationError if the call is blocked by policy.
         """
         event_id = str(uuid.uuid4())
         mode = self._transport.mode.value
+
+        # --- POLICY CHECK ---
+        decision = self._policy.evaluate(tool_name, arguments)
+        if decision.is_blocked:
+            self._logger.log(
+                CallEvent(
+                    event_id=event_id,
+                    event_type=EventType.CALL_BLOCKED,
+                    timestamp=utc_now(),
+                    session_id=self._session_id,
+                    tool_name=tool_name,
+                    transport_mode=mode,
+                    payload=arguments,
+                    error=decision.reason,
+                    upstream_command=self._config.upstream.command,
+                    extra={
+                        "policy_rule": decision.rule_name,
+                        "policy_action": decision.action.value,
+                        "policy_detail": decision.detail,
+                    },
+                )
+            )
+            raise PolicyViolationError(decision)
 
         # --- CALL_START ---
         self._logger.log(
@@ -110,6 +138,11 @@ class InterceptEngine:
                 transport_mode=mode,
                 payload=arguments,
                 upstream_command=self._config.upstream.command,
+                extra=(
+                    {"policy_rule": decision.rule_name, "policy_action": decision.action.value}
+                    if decision.action.value != "ALLOW"
+                    else {}
+                ),
             )
         )
 

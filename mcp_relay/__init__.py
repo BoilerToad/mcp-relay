@@ -2,7 +2,7 @@
 mcp-relay: MCP middleware relay and transport utilities.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from mcp_relay.relay import Relay
 from mcp_relay.config import RelayConfig

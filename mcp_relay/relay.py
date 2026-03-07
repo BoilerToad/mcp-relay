@@ -14,6 +14,7 @@ from mcp.types import CallToolResult, Tool
 from mcp_relay.config import RelayConfig
 from mcp_relay.core.intercept import InterceptEngine
 from mcp_relay.core.logging import EventLogger, utc_now
+from mcp_relay.policy.engine import PolicyConfig, PolicyEngine, PolicyViolationError
 from mcp_relay.storage import SQLiteStorage
 from mcp_relay.storage.base import SessionRecord
 from mcp_relay.transport.manager import TransportManager
@@ -52,8 +53,22 @@ class RelaySession:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> tuple[CallToolResult, float]:
-        # Route through InterceptEngine — logs call_start + call_end/error
+        # Route through InterceptEngine — policy check + logs call_start + call_end/blocked/error
         return await self._engine._intercept_call(tool_name, arguments)
+
+
+def _build_policy_engine(config: RelayConfig) -> PolicyEngine:
+    """Construct a PolicyEngine from the relay config's policy section."""
+    p = config.policy
+    policy_cfg = PolicyConfig(
+        enabled=p.enabled,
+        dry_run=p.dry_run,
+        ssrf_protection=p.ssrf_protection,
+        url_allowlist=p.url_allowlist,
+        url_blocklist=p.url_blocklist,
+        extra_blocked_hosts=p.extra_blocked_hosts,
+    )
+    return PolicyEngine.from_config(policy_cfg)
 
 
 class Relay:
@@ -118,12 +133,15 @@ class Relay:
             storage=storage,
         )
 
+        policy = _build_policy_engine(self._config)
+
         async with TransportManager(self._config) as transport:
             engine = InterceptEngine(
                 config=self._config,
                 transport=transport,
                 logger=event_logger,
                 session_id=session_id,
+                policy=policy,
             )
             try:
                 yield RelaySession(
@@ -169,16 +187,20 @@ class Relay:
             storage=storage,
         )
 
+        policy = _build_policy_engine(self._config)
+
         async with TransportManager(self._config) as transport:
             engine = InterceptEngine(
                 config=self._config,
                 transport=transport,
                 logger=event_logger,
                 session_id=session_id,
+                policy=policy,
             )
             log.info(
-                "mcp-relay v0.1.0 starting | session=%s model=%s",
+                "mcp-relay v0.2.0 starting | session=%s model=%s policy=%s",
                 session_id, model_name or "unknown",
+                "enabled" if self._config.policy.enabled else "disabled",
             )
             try:
                 await engine.run_stdio()

@@ -43,6 +43,17 @@ class TransportConfig:
 
 
 @dataclass
+class PolicyConfigSection:
+    """Mirrors the policy: section in relay.yaml."""
+    enabled: bool = True
+    dry_run: bool = False
+    ssrf_protection: bool = True
+    url_allowlist: list[str] = field(default_factory=list)
+    url_blocklist: list[str] = field(default_factory=list)
+    extra_blocked_hosts: list[str] = field(default_factory=list)
+
+
+@dataclass
 class RelayConfig:
     name: str = "mcp-relay"
     log_level: str = "INFO"
@@ -50,6 +61,7 @@ class RelayConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     upstream: UpstreamConfig = field(default_factory=UpstreamConfig)
+    policy: PolicyConfigSection = field(default_factory=PolicyConfigSection)
 
     @classmethod
     def from_file(cls, path: str | Path) -> "RelayConfig":
@@ -73,6 +85,7 @@ class RelayConfig:
         storage_section = raw.get("storage", {})
         logging_section = raw.get("logging", {})
         upstream_section = raw.get("upstream", {})
+        policy_section = raw.get("policy", {})
 
         mode_str = transport_section.get("default_mode", "LIVE").upper()
         try:
@@ -104,5 +117,13 @@ class RelayConfig:
                     **os.environ.copy(),
                     **upstream_section.get("env", {}),
                 },
+            ),
+            policy=PolicyConfigSection(
+                enabled=policy_section.get("enabled", True),
+                dry_run=policy_section.get("dry_run", False),
+                ssrf_protection=policy_section.get("ssrf_protection", True),
+                url_allowlist=policy_section.get("url_allowlist", []),
+                url_blocklist=policy_section.get("url_blocklist", []),
+                extra_blocked_hosts=policy_section.get("extra_blocked_hosts", []),
             ),
         )

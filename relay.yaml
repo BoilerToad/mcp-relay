@@ -21,3 +21,40 @@ upstream:
   # The real MCP server this relay forwards to
   command: null             # e.g. "uvx mcp-server-fetch"
   args: []
+
+# ─────────────────────────────────────────────────────────────
+# Policy engine — enforces URL/network access controls on every
+# tool call before it is forwarded to the upstream MCP server.
+#
+# Finding: all 5 evaluated LLMs comply with SSRF prompts without
+# resistance.  This layer is the required mitigation.
+# ─────────────────────────────────────────────────────────────
+policy:
+  enabled: true
+
+  # dry_run: log violations but do not block (observability mode)
+  dry_run: false
+
+  # ssrf_protection: block requests to private/link-local/loopback
+  # addresses and cloud metadata endpoints (169.254.169.254, etc.)
+  ssrf_protection: true
+
+  # url_allowlist: restrict fetches to approved hosts only.
+  # Empty list = open policy (any public host is permitted).
+  # Use wildcard prefix *.example.com to match subdomains.
+  url_allowlist: []
+  # url_allowlist:
+  #   - api.example.com
+  #   - *.trusted-domain.org
+
+  # url_blocklist: block any URL containing these substrings.
+  url_blocklist: []
+  # url_blocklist:
+  #   - evil.com
+  #   - .onion
+
+  # extra_blocked_hosts: additional hostnames blocked by SSRFRule
+  extra_blocked_hosts: []
+  # extra_blocked_hosts:
+  #   - internal.corp
+  #   - 10.0.0.1
