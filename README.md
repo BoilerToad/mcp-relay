@@ -4,7 +4,7 @@ A transparent MCP proxy for security research and behavioral analysis of local L
 
 ## Overview
 
-mcp-relay sits between a local LLM (via Ollama) and any MCP server, intercepting and logging every tool call without the model's awareness. It is purpose-built for empirical security research — specifically studying whether LLM alignment provides meaningful protection against tool misuse in agentic deployments.
+mcp-relay sits between a local LLM and any MCP server, intercepting and logging every tool call without the model's awareness. Supports Ollama (all platforms) and mlx-lm (Apple Silicon) as inference backends. It is purpose-built for empirical security research — specifically studying whether LLM alignment provides meaningful protection against tool misuse in agentic deployments.
 
 **Capabilities:**
 
@@ -26,7 +26,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-**Requirements:** Python >= 3.13, [Ollama](https://ollama.com) running locally, `uvx` for `mcp-server-fetch`.
+**Requirements:** Python >= 3.13, `uvx` for `mcp-server-fetch`, and at least one inference backend:
+- **Ollama** — `localhost:11434`
+- **mlx-lm** (Apple Silicon only) — `python -m mlx_lm.server --model <name> --port 8080`
 
 ---
 
@@ -56,19 +58,25 @@ python demo/research_report.py both
 pytest -m "not integration" --cov=mcp_relay --cov-report=term-missing
 ```
 
-### LLM behavioral tests (requires Ollama)
+### LLM behavioral tests
 
 ```bash
-# All tiers, specific model
+# Ollama model
 pytest tests/test_llm_tool_calls.py -m integration -v --model qwen2.5:latest
+
+# mlx-lm model (Apple Silicon; start mlx_lm.server first)
+pytest tests/test_llm_tool_calls.py -m integration -v \
+  --model mlx-community/Qwen3.5-9B-MLX-4bit --backend mlx
 
 # Specific tier
 pytest tests/test_llm_tool_calls.py -m integration -k "tier4" --model qwen2.5:latest
 pytest tests/test_llm_tool_calls.py -m integration -k "tier5" --model qwen2.5:latest
 
-# Policy engine unit tests (no Ollama required)
+# Policy engine unit tests (no backend required)
 pytest tests/test_policy_engine.py -v
 ```
+
+The `--backend` option accepts `ollama` or `mlx`. If omitted, the fixture infers from the model name (a `/` implies mlx-lm).
 
 See `docs/testing-strategy.md` for full test suite documentation including all test IDs, assertions, and corpus structure.
 
@@ -145,8 +153,13 @@ study:
 models:
   - name: qwen2.5:latest
     enabled: true
+    backend: ollama                              # ollama (default) or mlx
+  - name: mlx-community/Qwen3.5-9B-MLX-4bit
+    enabled: true
+    backend: mlx                                 # requires mlx_lm.server on :8080
   - name: gemma3:4b
     enabled: false   # no tools API
+    backend: ollama
 
 db: null             # null = ~/.mcp-relay/research.db
 tiers: null          # null = all tiers; or [1, 4, 5]
@@ -175,6 +188,8 @@ Built-in profiles: `clean`, `degraded_static`, `degraded_recovery`, `adversarial
 
 ## Model Compatibility
 
+**Ollama** (`localhost:11434`):
+
 | Model | Family | Tool API | Notes |
 |-------|--------|----------|-------|
 | qwen2.5:latest | Alibaba | ✓ | Confirmed compatible |
@@ -185,6 +200,13 @@ Built-in profiles: `clean`, `degraded_static`, `degraded_recovery`, `adversarial
 | Llama3.1:8b | Meta | ✓ | Confirmed compatible |
 | gemma3:* | Google | ✗ | No tools API |
 | deepseek-r1:* | DeepSeek | ✗ | No tools API |
+
+**mlx-lm** (`localhost:8080`, Apple Silicon only):
+
+| Model | Family | Tool API | Notes |
+|-------|--------|----------|-------|
+| mlx-community/Qwen3.5-9B-MLX-4bit | Alibaba | ✓ | ~5.5GB, Tier 1–5 confirmed |
+| mlx-community/Qwen3-30B-A3B-MLX-4bit | Alibaba MoE | — | ~18GB, requires 36GB+ unified memory |
 
 Full inventory with compatibility notes: `studies/full_study.yaml`
 

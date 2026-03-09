@@ -8,14 +8,15 @@ The test suite is organized into three layers:
 2. **Policy engine tests** — validate URL enforcement, bypass resistance, and known limitations
 3. **LLM behavioral tests** — evaluate model tool-calling behavior using a structured prompt corpus
 
-All tests run under `pytest`. Infrastructure and policy tests run without external dependencies. LLM behavioral tests require Ollama and are gated behind `@pytest.mark.integration`.
+All tests run under `pytest`. Infrastructure and policy tests run without external dependencies. LLM behavioral tests require a running inference backend and are gated behind `@pytest.mark.integration`.
 
 ```bash
 pytest -m "not integration"                           # infrastructure + policy (CI-safe)
 pytest tests/test_policy_engine.py -v                 # policy engine only
 pytest -m integration                                 # LLM behavioral tests (requires Ollama)
 pytest -m integration -k "tier1"                      # single tier
-pytest -m integration --model qwen2.5:latest          # specific model
+pytest -m integration --model qwen2.5:latest          # specific Ollama model
+pytest -m integration --model mlx-community/Qwen3.5-9B-MLX-4bit --backend mlx  # mlx-lm model
 ```
 
 ---
@@ -251,13 +252,32 @@ Confirms `PolicyViolationError` is raised correctly by the engine and carries th
 
 ## Part 3 — LLM Behavioral Tests (`test_llm_tool_calls.py`)
 
+### Backends
+
+The test harness supports two inference backends, selected via the `--backend` CLI option:
+
+| Backend | Flag | Server | Model name format |
+|---------|------|--------|------------------|
+| Ollama | `--backend ollama` | `localhost:11434` | `qwen2.5:latest` |
+| mlx-lm | `--backend mlx` | `localhost:8080` | `mlx-community/Qwen3.5-9B-MLX-4bit` |
+
+If `--backend` is omitted, the fixture infers the backend from the model name: a `/` in the name implies mlx-lm, otherwise Ollama. When running via `run_study.py`, the `backend` field in the study YAML is passed through as `--backend` automatically.
+
+To start the mlx-lm server (Apple Silicon only, requires `venv-MLX-311`):
+
+```bash
+python -m mlx_lm.server --model mlx-community/Qwen3.5-9B-MLX-4bit --port 8080
+```
+
 ### Tool API Compatibility Screening
 
-The `research_model` fixture probes the target model before running any tests. Incompatible models skip cleanly.
+The `research_model` fixture probes the target model with a dummy tool call before running any tests. Incompatible models skip cleanly with a diagnostic message.
 
-**Confirmed incompatible:** `gemma3:*`, `deepseek-r1:*`
+**Confirmed incompatible (Ollama):** `gemma3:*`, `deepseek-r1:*`
 
-**Confirmed compatible:** `qwen2.5:latest`, `qwen3.5:latest`, `llama3.2:latest`, `Llama3.1:8b`, `gpt-oss:20b`, `glm-4.7-flash:latest`
+**Confirmed compatible (Ollama):** `qwen2.5:latest`, `qwen3.5:latest`, `llama3.2:latest`, `Llama3.1:8b`, `gpt-oss:20b`, `glm-4.7-flash:latest`
+
+**Confirmed compatible (mlx-lm):** `mlx-community/Qwen3.5-9B-MLX-4bit`
 
 ---
 
@@ -337,12 +357,19 @@ For `t5_ssrf_private_ip` and `t5_localhost_probe`: with `ssrf_protection: true` 
 # Infrastructure + policy (CI-safe)
 pytest tests/ -m "not integration" --cov=mcp_relay --cov-report=term-missing
 
-# LLM behavioral — all tool-capable models
+# LLM behavioral — Ollama models
 pytest tests/test_llm_tool_calls.py -m integration --model qwen2.5:latest
 pytest tests/test_llm_tool_calls.py -m integration --model qwen3.5:latest
 pytest tests/test_llm_tool_calls.py -m integration --model llama3.2:latest
 pytest tests/test_llm_tool_calls.py -m integration --model gpt-oss:20b
 pytest tests/test_llm_tool_calls.py -m integration --model glm-4.7-flash:latest
+
+# LLM behavioral — mlx-lm models (Apple Silicon; start mlx_lm.server first)
+pytest tests/test_llm_tool_calls.py -m integration \
+  --model mlx-community/Qwen3.5-9B-MLX-4bit --backend mlx
+
+# Multi-model study (backend routing automatic from YAML)
+python scripts/run_study.py --study studies/full_study.yaml
 
 # Generate report after all models have run
 python demo/research_report.py both
