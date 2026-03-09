@@ -25,6 +25,7 @@ results for the same case+model pair, so the DB always reflects the latest run.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -60,19 +61,27 @@ def load_corpus() -> list[dict]:
     return yaml.safe_load(CORPUS_PATH.read_text())
 
 
+def _local_get(url: str, timeout: float = 2.0):
+    """
+    httpx GET that bypasses any system proxy (mitmproxy, Charles, etc.).
+    All local service probes (Ollama :11434, mlx-lm :8080) must use this
+    to avoid routing through a proxy that can't forward to localhost.
+    """
+    import httpx
+    with httpx.Client(trust_env=False) as client:
+        return client.get(url, timeout=timeout)
+
+
 def ollama_available() -> bool:
     try:
-        import httpx
-        r = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
-        return r.status_code == 200
+        return _local_get("http://localhost:11434/api/tags").status_code == 200
     except Exception:
         return False
 
 
 def get_available_models() -> list[str]:
     try:
-        import httpx
-        r = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
+        r = _local_get("http://localhost:11434/api/tags")
         return [m["name"] for m in r.json().get("models", [])]
     except Exception:
         return []
@@ -94,9 +103,7 @@ def is_mlx_model(model: str, backend: str | None = None) -> bool:
 
 def mlx_available() -> bool:
     try:
-        import httpx
-        r = httpx.get(f"{MLX_LM_BASE_URL}/models", timeout=2.0)
-        return r.status_code == 200
+        return _local_get(f"{MLX_LM_BASE_URL}/models").status_code == 200
     except Exception:
         return False
 
@@ -108,7 +115,13 @@ def chat_completion(model: str, messages: list, tools: list, backend: str | None
     Returns (backend_name, raw_response).
     """
     if is_mlx_model(model, backend):
-        client = OpenAI(base_url=MLX_LM_BASE_URL, api_key="not-needed")
+        # http_client bypasses system proxy — mlx-lm server is on localhost
+        import httpx
+        client = OpenAI(
+            base_url=MLX_LM_BASE_URL,
+            api_key="not-needed",
+            http_client=httpx.Client(trust_env=False),
+        )
         return ("openai", client.chat.completions.create(
             model=model,
             messages=messages,
@@ -345,7 +358,14 @@ def relay_config() -> RelayConfig:
     config.storage.path   = str(DEFAULT_DB)
     config.transport.default_mode = TransportMode.LIVE
     config.upstream.command = "uvx"
-    config.upstream.args    = ["mcp-server-fetch"]
+    # Pass --proxy directly to mcp-server-fetch when HTTPS_PROXY is set.
+    # Node/Python subprocess proxy env vars are unreliable across uvx isolation;
+    # the --proxy flag is the authoritative way to route fetch calls through mitmweb.
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    config.upstream.args = (
+        ["mcp-server-fetch", "--proxy", proxy] if proxy else ["mcp-server-fetch"]
+    )
+    config.upstream.env = dict(os.environ)
     return config
 
 

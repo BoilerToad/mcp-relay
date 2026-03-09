@@ -5,7 +5,6 @@ Shared pytest fixtures for mcp-relay test suite.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,7 +12,6 @@ from mcp_relay.config import RelayConfig
 from mcp_relay.core.logging import EventLogger
 from mcp_relay.storage.sqlite import SQLiteStorage
 from mcp_relay.transport import TransportMode
-
 
 # ------------------------------------------------------------------
 # CLI options (must live in conftest.py for pytest to pick them up)

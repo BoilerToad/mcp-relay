@@ -19,7 +19,7 @@ import argparse
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -40,28 +40,30 @@ def load_study(path: Path) -> dict:
         return yaml.safe_load(f)
 
 
+def _local_get(url: str, timeout: float = 2.0):
+    """httpx GET that bypasses any system proxy (mitmproxy, Charles, etc.)."""
+    import httpx
+    with httpx.Client(trust_env=False) as client:
+        return client.get(url, timeout=timeout)
+
+
 def ollama_available() -> bool:
     try:
-        import httpx
-        r = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
-        return r.status_code == 200
+        return _local_get("http://localhost:11434/api/tags").status_code == 200
     except Exception:
         return False
 
 
 def mlx_available() -> bool:
     try:
-        import httpx
-        r = httpx.get("http://localhost:8080/v1/models", timeout=2.0)
-        return r.status_code == 200
+        return _local_get("http://localhost:8080/v1/models").status_code == 200
     except Exception:
         return False
 
 
 def get_available_ollama_models() -> set[str]:
     try:
-        import httpx
-        r = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
+        r = _local_get("http://localhost:11434/api/tags")
         return {m["name"] for m in r.json().get("models", [])}
     except Exception:
         return set()
@@ -163,7 +165,7 @@ def main() -> None:
     print(f"  Runs per model:  {runs_per_model}")
     print(f"  Tiers:           {tiers or 'all'}")
     print(f"  DB:              {db_path}")
-    print(f"  Started:         {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"  Started:         {datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"{'='*60}\n")
 
     if not args.dry_run:
@@ -171,18 +173,18 @@ def main() -> None:
         mlx_models    = [m for m in enabled_models if m["backend"] == "mlx"]
 
         if ollama_models and not ollama_available():
-            print("[error] Ollama not running at localhost:11434 — needed for Ollama models.", file=sys.stderr)
+            print("[error] Ollama not running at localhost:11434", file=sys.stderr)
             sys.exit(1)
         if mlx_models and not mlx_available():
-            print("[error] mlx-lm server not running at localhost:8080 — needed for mlx models.", file=sys.stderr)
-            print("        Start with: python -m mlx_lm.server --model <name> --port 8080", file=sys.stderr)
+            print("[error] mlx-lm server not running at localhost:8080", file=sys.stderr)
+            print("        Start: mlx_lm.server --model <name> --port 8080", file=sys.stderr)
             sys.exit(1)
 
         if ollama_models:
             available = get_available_ollama_models()
             missing = [m["name"] for m in ollama_models if m["name"] not in available]
             if missing:
-                print(f"[warn] Models not available in Ollama (will be skipped by pytest):")
+                print("[warn] Models not available in Ollama (will be skipped by pytest):")
                 for name in missing:
                     print(f"  - {name}")
                 print()
@@ -225,7 +227,11 @@ def main() -> None:
             results.append(outcome)
 
             status = "PASS" if proc.returncode == 0 else "FAIL"
-            print(f"  → {status}  {outcome['passed']}p {outcome['failed']}f {outcome['xfailed']}xf  {fmt_duration(duration)}\n")
+            passed  = outcome['passed']
+            failed  = outcome['failed']
+            xfailed = outcome['xfailed']
+            dur     = fmt_duration(duration)
+            print(f"  → {status}  {passed}p {failed}f {xfailed}xf  {dur}\n")
 
     study_duration = time.monotonic() - study_start
 
@@ -253,7 +259,7 @@ def main() -> None:
 
     if not args.dry_run:
         print(f"Results written to: {db_path}")
-        print(f"View with:  python demo/research_report.py both\n")
+        print("View with:  python demo/research_report.py both\n")
 
     sys.exit(1 if total_fail > 0 else 0)
 
