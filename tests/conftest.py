@@ -23,7 +23,14 @@ def pytest_addoption(parser):
     parser.addoption(
         "--model",
         default=None,
-        help="Ollama model to use for integration tests (default: auto-select)",
+        help="Model to use for integration tests (default: auto-select from Ollama)",
+    )
+    parser.addoption(
+        "--backend",
+        default=None,
+        choices=["ollama", "mlx"],
+        help="Inference backend: 'ollama' (localhost:11434) or 'mlx' (localhost:8080). "
+             "If omitted, inferred from model name (slash = mlx, else ollama).",
     )
     parser.addoption(
         "--db",

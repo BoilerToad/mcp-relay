@@ -1,6 +1,10 @@
 # mcp-relay full study configuration
 # All models pulled as of March 2026 — annotated with tool-call compatibility
 # Run with: python scripts/run_study.py --study studies/full_study.yaml
+#
+# backend field:
+#   ollama  — served via Ollama at localhost:11434 (default if omitted)
+#   mlx     — served via mlx_lm.server at localhost:8080 (Apple Silicon only)
 
 study:
   name: "full_study"
@@ -13,62 +17,90 @@ study:
 
 models:
 
-  # ── Confirmed tool-capable, previously tested ──────────────────────────
-  - name: qwen2.5:latest          # 4.7GB  | Alibaba | CAPABLE WITH RISK
+  # ── mlx-lm (Apple Silicon, requires: python -m mlx_lm.server --port 8080) ──
+  - name: mlx-community/Qwen3.5-9B-MLX-4bit    # ~5.5GB  | Alibaba dense
     enabled: true
-  - name: qwen3.5:latest          # 6.6GB  | Alibaba | CAPABLE WITH RISK, hybrid thinking
-    enabled: true
-  - name: gpt-oss:20b             # 13.8GB | OpenAI  | CAPABLE WITH RISK
-    enabled: true
-  - name: glm-4.7-flash:latest    # 19.0GB | ZHIPU AI | CAPABLE WITH RISK
-    enabled: true
-  - name: llama3.2:latest         # 2.0GB  | Meta    | UNRELIABLE (T4 fails)
-    enabled: true
-  - name: Llama3.1:8b             # 4.9GB  | Meta    | not yet run — adds Meta size comparison
-    enabled: true
-  - name: Llama3.1:latest         # 4.9GB  | Meta    | same weights as Llama3.1:8b, likely duplicate
-    enabled: false                 # disable to avoid redundant runs — verify tag first
+    backend: mlx
+  - name: mlx-community/Qwen3-30B-A3B-MLX-4bit # ~18GB   | Alibaba MoE 30B/3.3B active
+    enabled: false                               # enable on 36GB+ unified memory
+    backend: mlx
 
-  # ── Incompatible — no Ollama tools API support ──────────────────────────
+  # ── Ollama — confirmed tool-capable ────────────────────────────────────
+  - name: qwen2.5:latest          # 4.7GB  | Alibaba   | CAPABLE WITH RISK
+    enabled: true
+    backend: ollama
+  - name: qwen3.5:latest          # 6.6GB  | Alibaba   | CAPABLE WITH RISK, hybrid thinking
+    enabled: true
+    backend: ollama
+  - name: gpt-oss:20b             # 13.8GB | OpenAI    | CAPABLE WITH RISK
+    enabled: true
+    backend: ollama
+  - name: glm-4.7-flash:latest    # 19.0GB | ZHIPU AI  | CAPABLE WITH RISK
+    enabled: true
+    backend: ollama
+  - name: llama3.2:latest         # 2.0GB  | Meta      | UNRELIABLE (T4 fails)
+    enabled: true
+    backend: ollama
+  - name: Llama3.1:8b             # 4.9GB  | Meta      | not yet run
+    enabled: true
+    backend: ollama
+  - name: Llama3.1:latest         # 4.9GB  | Meta      | DUPLICATE of Llama3.1:8b
+    enabled: false
+    backend: ollama
+
+  # ── Incompatible — no tools API ────────────────────────────────────────
   - name: deepseek-r1:7b          # 4.7GB  | DeepSeek | no tools API
     enabled: false
+    backend: ollama
   - name: deepseek-r1:8b          # 5.2GB  | DeepSeek | no tools API
     enabled: false
+    backend: ollama
   - name: deepseek-r1:14b         # 9.0GB  | DeepSeek | no tools API
     enabled: false
+    backend: ollama
   - name: deepseek-r1:32b         # 19.9GB | DeepSeek | no tools API
     enabled: false
-  - name: hf.co/unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF:F16  # 16.1GB | DeepSeek distill | no tools API
+    backend: ollama
+  - name: hf.co/unsloth/DeepSeek-R1-Distill-Llama-8B-GGUF:F16
     enabled: false
-  - name: gemma3:4b               # 3.3GB  | Google  | no tools API (confirmed)
+    backend: ollama
+  - name: gemma3:4b               # 3.3GB  | Google   | no tools API (confirmed)
     enabled: false
-  - name: gemma3:12b              # 8.1GB  | Google  | no tools API (unconfirmed — re-test to verify)
+    backend: ollama
+  - name: gemma3:12b              # 8.1GB  | Google   | no tools API (unconfirmed)
     enabled: false
-  - name: gemma3:12b-beeai        # 8.1GB  | Google/BeeAI | unverified — likely no tools API
+    backend: ollama
+  - name: gemma3:12b-beeai        # 8.1GB  | Google/BeeAI | unverified
     enabled: false
-  - name: gemma3:27b              # 17.4GB | Google  | unverified — likely no tools API
+    backend: ollama
+  - name: gemma3:27b              # 17.4GB | Google   | unverified
     enabled: false
-  - name: gemma2:27b              # 15.6GB | Google  | older arch — likely no tools API
+    backend: ollama
+  - name: gemma2:27b              # 15.6GB | Google   | older arch
     enabled: false
+    backend: ollama
 
-  # ── Cloud-routed (0GB local — require external connectivity) ───────────
-  - name: deepseek-v3.2:cloud     # 0.0GB  | DeepSeek cloud | untested
-    enabled: false                 # enable if cloud routing is confirmed available
-  - name: glm-4.7:cloud           # 0.0GB  | ZHIPU AI cloud | untested
-    enabled: false                 # enable if cloud routing is confirmed available
-  - name: gemini-3-pro-preview:latest  # 0.0GB | Google cloud | untested
+  # ── Cloud-routed ───────────────────────────────────────────────────────
+  - name: deepseek-v3.2:cloud
     enabled: false
+    backend: ollama
+  - name: glm-4.7:cloud
+    enabled: false
+    backend: ollama
+  - name: gemini-3-pro-preview:latest
+    enabled: false
+    backend: ollama
 
-  # ── Not applicable ──────────────────────────────────────────────────────
-  - name: mxbai-embed-large:latest  # 0.7GB | embedding model only — no chat
+  # ── Not applicable ─────────────────────────────────────────────────────
+  - name: mxbai-embed-large:latest  # embedding only
     enabled: false
-  - name: llama3.2-vision:11b     # 7.8GB  | vision model — tool calling not tested
+  - name: llama3.2-vision:11b
     enabled: false
-  - name: llava:13b               # 8.0GB  | vision model — tool calling not tested
+  - name: llava:13b
     enabled: false
-  - name: llama3.3:latest         # 42.5GB | too slow for routine runs
+  - name: llama3.3:latest           # 42.5GB — too slow
     enabled: false
-  - name: nemotron-3-nano:latest  # 24.3GB | NVIDIA — tool calling unverified
+  - name: nemotron-3-nano:latest    # 24.3GB | NVIDIA — unverified
     enabled: false
 
 # Optional overrides

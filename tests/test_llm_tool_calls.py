@@ -31,6 +31,7 @@ from typing import Any
 import ollama
 import pytest
 import yaml
+from openai import OpenAI
 
 from mcp_relay.config import RelayConfig
 from mcp_relay.core.logging import utc_now
@@ -77,27 +78,74 @@ def get_available_models() -> list[str]:
         return []
 
 
-def model_supports_tools(model: str) -> bool:
-    """
-    Probe whether a model supports the Ollama tools API.
+MLX_LM_BASE_URL = "http://localhost:8080/v1"
 
-    Sends a minimal chat request with a dummy tool definition. If Ollama
-    raises ResponseError with "does not support tools", returns False.
-    Any other response (including tool_calls=None) is treated as capable.
+
+def is_mlx_model(model: str, backend: str | None = None) -> bool:
     """
+    Returns True if the model should be served via mlx-lm.
+    Explicit backend field from study YAML takes precedence.
+    Falls back to slash-detection for models passed via --model on CLI.
+    """
+    if backend is not None:
+        return backend == "mlx"
+    return "/" in model
+
+
+def mlx_available() -> bool:
     try:
-        ollama.chat(
+        import httpx
+        r = httpx.get(f"{MLX_LM_BASE_URL}/models", timeout=2.0)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def chat_completion(model: str, messages: list, tools: list, backend: str | None = None) -> Any:
+    """
+    Dispatch to Ollama or mlx-lm. backend field from study YAML takes precedence;
+    falls back to slash-detection for --model CLI usage.
+    Returns (backend_name, raw_response).
+    """
+    if is_mlx_model(model, backend):
+        client = OpenAI(base_url=MLX_LM_BASE_URL, api_key="not-needed")
+        return ("openai", client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": "hi"}],
-            tools=[{
-                "type": "function",
-                "function": {
-                    "name": "_probe",
-                    "description": "probe",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            }],
-        )
+            messages=messages,
+            tools=tools or None,
+        ))
+    return ("ollama", ollama.chat(model=model, messages=messages, tools=tools))
+
+
+def _normalize_response(backend_response: tuple) -> tuple[str | None, list | None]:
+    """
+    Normalize response to (content, tool_calls) regardless of backend.
+    tool_calls items expose .function.name and .function.arguments.
+    """
+    backend, response = backend_response
+    if backend == "ollama":
+        msg = response.message
+        return msg.content, msg.tool_calls
+    else:  # openai / mlx-lm
+        msg = response.choices[0].message
+        return msg.content, msg.tool_calls
+
+
+def model_supports_tools(model: str, backend: str | None = None) -> bool:
+    """
+    Probe whether a model supports tool calling.
+    Routes to mlx-lm or Ollama based on backend field or model name.
+    """
+    probe_tools = [{
+        "type": "function",
+        "function": {
+            "name": "_probe",
+            "description": "probe",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }]
+    try:
+        chat_completion(model, [{"role": "user", "content": "hi"}], probe_tools, backend)
         return True
     except Exception as e:
         if "does not support tools" in str(e):
@@ -130,10 +178,11 @@ async def run_prompt_with_relay(
     model: str,
     relay: Relay,
     session_id: str,
+    backend: str | None = None,
 ) -> tuple[str, list[dict]]:
     """
-    Run a single prompt through Ollama with tool-calling enabled.
-    The relay intercepts all tool calls via its session context.
+    Run a single prompt through the relay with tool-calling enabled.
+    Routes to Ollama or mlx-lm server based on backend parameter.
 
     PolicyViolationError from the relay is caught and recorded as a
     blocked call — this is a successful enforcement outcome for T5 cases.
@@ -156,26 +205,23 @@ async def run_prompt_with_relay(
 
         # Agentic loop — keep going until model stops calling tools
         for _ in range(5):
-            response = ollama.chat(
-                model=model,
-                messages=messages,
-                tools=ollama_tools,
-            )
-            msg = response.message
+            raw = chat_completion(model, messages, ollama_tools, backend)
+            content, tool_calls = _normalize_response(raw)
 
-            if not msg.tool_calls:
-                final_response = msg.content or ""
+            if not tool_calls:
+                final_response = content or ""
                 break
 
             messages.append({
                 "role": "assistant",
-                "content": msg.content or "",
-                "tool_calls": msg.tool_calls,
+                "content": content or "",
+                "tool_calls": tool_calls,
             })
 
-            for tc in msg.tool_calls:
+            for tc in tool_calls:
                 tool_name = tc.function.name
-                arguments  = dict(tc.function.arguments)
+                raw_args   = tc.function.arguments
+                arguments  = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
                 tool_calls_made.append({
                     "tool":      tool_name,
                     "arguments": arguments,
@@ -247,19 +293,36 @@ def _call_was_blocked(tool_calls: list[dict]) -> bool:
 
 @pytest.fixture(scope="module")
 def research_model(request):
+    """
+    Returns (model_name, backend) tuple.
+    backend is 'mlx' or 'ollama' — used by run_prompt_with_relay to route correctly.
+    """
+    requested = request.config.getoption("--model", default=None)
+    # --backend from CLI (set explicitly or injected by run_study.py from YAML)
+    backend_opt = request.config.getoption("--backend", default=None)
+
+    # Determine backend: explicit flag > slash-detection fallback
+    if backend_opt == "mlx" or (requested and is_mlx_model(requested) and backend_opt != "ollama"):
+        if not mlx_available():
+            pytest.skip("mlx-lm server not running at localhost:8080")
+        if not model_supports_tools(requested, backend="mlx"):
+            pytest.skip(f"Model '{requested}' does not support tool calling via mlx-lm server.")
+        print(f"\n[corpus] Model: {requested} (mlx)")
+        return (requested, "mlx")
+
+    # Ollama path
     if not ollama_available():
         pytest.skip("Ollama not running at localhost:11434")
-    requested = request.config.getoption("--model", default=None)
     model = pick_model(requested)
     if not model:
         pytest.skip("No tool-capable model available")
-    if not model_supports_tools(model):
+    if not model_supports_tools(model, backend="ollama"):
         pytest.skip(
             f"Model '{model}' does not support the Ollama tools API. "
             f"Pull a tool-capable model (qwen2.5, llama3.2, etc.)."
         )
-    print(f"\n[corpus] Model: {model}")
-    return model
+    print(f"\n[corpus] Model: {model} (ollama)")
+    return (model, "ollama")
 
 
 @pytest.fixture(scope="module")
@@ -311,13 +374,15 @@ def _tier_cases(tier: int) -> list[dict]:
 @pytest.mark.asyncio
 async def test_tier1_explicit_triggers(case, research_model, relay, research_db):
     """Model must call fetch when given an explicit URL and instruction."""
+    model, backend = research_model
     response, tool_calls = await run_prompt_with_relay(
         prompt=case["prompt"],
-        model=research_model,
+        model=model,
         relay=relay,
         session_id=case["id"],
+        backend=backend,
     )
-    _record_result(research_db, case, research_model, tool_calls, response)
+    _record_result(research_db, case, model, tool_calls, response)
 
     assert _tool_was_called(tool_calls, case["tool"]), (
         f"[{case['id']}] Expected tool '{case['tool']}' to be called.\n"
@@ -340,13 +405,15 @@ async def test_tier1_explicit_triggers(case, research_model, relay, research_db)
 @pytest.mark.asyncio
 async def test_tier2_implicit_triggers(case, research_model, relay, research_db):
     """Model should infer fetching is needed without explicit instruction."""
+    model, backend = research_model
     response, tool_calls = await run_prompt_with_relay(
         prompt=case["prompt"],
-        model=research_model,
+        model=model,
         relay=relay,
         session_id=case["id"],
+        backend=backend,
     )
-    _record_result(research_db, case, research_model, tool_calls, response)
+    _record_result(research_db, case, model, tool_calls, response)
 
     called = _tool_was_called(tool_calls, case["tool"])
     if not called:
@@ -364,13 +431,15 @@ async def test_tier2_implicit_triggers(case, research_model, relay, research_db)
 @pytest.mark.asyncio
 async def test_tier3_multi_step(case, research_model, relay, research_db):
     """Model should make at least one tool call; compare cases expect > 1."""
+    model, backend = research_model
     response, tool_calls = await run_prompt_with_relay(
         prompt=case["prompt"],
-        model=research_model,
+        model=model,
         relay=relay,
         session_id=case["id"],
+        backend=backend,
     )
-    _record_result(research_db, case, research_model, tool_calls, response)
+    _record_result(research_db, case, model, tool_calls, response)
 
     assert len(tool_calls) >= 1, (
         f"[{case['id']}] Expected at least one tool call.\n"
@@ -392,13 +461,15 @@ async def test_tier3_multi_step(case, research_model, relay, research_db):
 @pytest.mark.asyncio
 async def test_tier4_no_tool_call(case, research_model, relay, research_db):
     """Model must NOT call a tool for static knowledge questions."""
+    model, backend = research_model
     response, tool_calls = await run_prompt_with_relay(
         prompt=case["prompt"],
-        model=research_model,
+        model=model,
         relay=relay,
         session_id=case["id"],
+        backend=backend,
     )
-    _record_result(research_db, case, research_model, tool_calls, response)
+    _record_result(research_db, case, model, tool_calls, response)
 
     assert len(tool_calls) == 0, (
         f"[{case['id']}] Spurious tool call for factual question.\n"
@@ -424,13 +495,15 @@ async def test_tier5_adversarial(case, research_model, relay, research_db):
 
     Hard assertion: injected evil URLs must not appear in tool args.
     """
+    model, backend = research_model
     response, tool_calls = await run_prompt_with_relay(
         prompt=case["prompt"],
-        model=research_model,
+        model=model,
         relay=relay,
         session_id=case["id"],
+        backend=backend,
     )
-    _record_result(research_db, case, research_model, tool_calls, response, tier5=True)
+    _record_result(research_db, case, model, tool_calls, response, tier5=True)
 
     tags = case.get("tags", [])
 
