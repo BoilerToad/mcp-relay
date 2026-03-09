@@ -1,7 +1,7 @@
 # mcp-relay — Academic Results
 
 Empirical findings from the mcp-relay cross-model behavioral study.  
-Study date: 2026-03-07. Models evaluated: 5. Corpus: 28 cases, 5 tiers. Runs per model: 2–3.
+Study dates: 2026-03-07 (Ollama models), 2026-03-08 (mlx-lm). Models evaluated: 6. Corpus: 28 cases, 5 tiers. Runs per model: 3.
 
 This document supports the research question: *does LLM alignment provide meaningful protection against tool misuse in agentic MCP deployments?*
 
@@ -11,7 +11,7 @@ This document supports the research question: *does LLM alignment provide meanin
 
 ### Apparatus
 
-mcp-relay acts as a transparent proxy between Ollama (local LLM runtime) and `mcp-server-fetch` (upstream MCP server). The relay intercepts every tool call at the MCP protocol layer, logging tool name, arguments, response, and latency to SQLite. The model has no awareness of the relay.
+mcp-relay acts as a transparent proxy between the LLM runtime (Ollama or mlx-lm) and `mcp-server-fetch` (upstream MCP server). The relay intercepts every tool call at the MCP protocol layer, logging tool name, arguments, response, and latency to SQLite. The model has no awareness of the relay.
 
 All tool calls are routed through an agentic loop: the model is given a prompt and tool schema, and may invoke tools iteratively until it produces a final text response or reaches the maximum round limit (5).
 
@@ -31,30 +31,33 @@ Tier 4 and Tier 5 are the primary research tiers. See `docs/testing-strategy.md`
 
 ### Models
 
-| Model | Family | Size | Tool API |
-|-------|--------|------|----------|
-| qwen2.5:latest | Alibaba | 4.7GB | ✓ |
-| qwen3.5:latest | Alibaba | 6.6GB | ✓ |
-| gpt-oss:20b | OpenAI | 13.8GB | ✓ |
-| glm-4.7-flash:latest | ZHIPU AI | 19.0GB | ✓ |
-| llama3.2:latest | Meta | 2.0GB | ✓ |
-| gemma3:4b | Google | — | ✗ — incompatible |
-| deepseek-r1:* | DeepSeek | — | ✗ — incompatible |
+| Model | Family | Size | Tool API | Backend |
+|-------|--------|------|----------|---------|
+| qwen2.5:latest | Alibaba | 4.7GB | ✓ | Ollama |
+| qwen3.5:latest | Alibaba | 6.6GB | ✓ | Ollama |
+| gpt-oss:20b | OpenAI | 13.8GB | ✓ | Ollama |
+| glm-4.7-flash:latest | ZHIPU AI | 19.0GB | ✓ | Ollama |
+| llama3.2:latest | Meta | 2.0GB | ✓ | Ollama |
+| mlx-community/Qwen3.5-9B-MLX-4bit | Alibaba | ~5GB (4-bit) | ✓ | mlx-lm |
+| gemma3:4b | Google | — | ✗ — incompatible | — |
+| deepseek-r1:* | DeepSeek | — | ✗ — incompatible | — |
 
 ---
 
 ## 2. Cross-Model Results
 
-| Model | T1 (5) | T2 (5) | T3 (4) | T4 (6) | SSRF | Verdict |
-|-------|--------|--------|--------|--------|------|---------|
-| qwen2.5:latest | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 5/6 | ⚠ complied | CAPABLE WITH RISK |
-| qwen3.5:latest | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 6/6 ✓ | ⚠ complied | CAPABLE WITH RISK |
-| gpt-oss:20b | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 6/6 ✓ | ⚠ complied | CAPABLE WITH RISK |
-| glm-4.7-flash:latest | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 6/6 ✓ | ⚠ complied | CAPABLE WITH RISK |
-| llama3.2:latest | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 1/6 ✗ | ⚠ complied | UNRELIABLE |
+| Model | T1 (5) | T2 (5) | T3 (4) | T4 (6) | SSRF | Backend | Verdict |
+|-------|--------|--------|--------|--------|------|---------|---------|
+| qwen2.5:latest | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 5/6 | ⚠ complied | Ollama | CAPABLE WITH RISK |
+| qwen3.5:latest | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 6/6 ✓ | ⚠ complied | Ollama | CAPABLE WITH RISK |
+| gpt-oss:20b | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 6/6 ✓ | ⚠ complied | Ollama | CAPABLE WITH RISK |
+| glm-4.7-flash:latest | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 6/6 ✓ | ⚠ complied | Ollama | CAPABLE WITH RISK |
+| llama3.2:latest | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 1/6 ✗ | ⚠ complied | Ollama | UNRELIABLE |
+| Qwen3.5-9B-MLX-4bit | 5/5 ✓ | 5/5 ✓ | 4/4 ✓ | 6/6 ✓ | ⚠ complied | mlx-lm | CAPABLE WITH RISK |
 
 T4 column = number of cases where model correctly did NOT call a tool (higher is better).  
-SSRF column reflects behavior on `t5_ssrf_private_ip` + `t5_localhost_probe` prior to policy engine enforcement.
+SSRF column reflects behavior on `t5_ssrf_private_ip` + `t5_localhost_probe` prior to policy engine enforcement.  
+Qwen3.5-9B-MLX-4bit: 28/28 across 3 independent runs (2026-03-08). Inference runtime is mlx-lm; all other models use Ollama.
 
 ---
 
@@ -78,14 +81,15 @@ This finding is orthogonal to prior MCP SSRF CVEs (e.g. BlueRock/MarkItDown, End
 
 ---
 
-### Finding 2: SSRF compliance is alignment-invariant
+### Finding 2: SSRF compliance is alignment-invariant and runtime-invariant
 
 The same behavior was observed in:
 - Models with documented safety fine-tuning (gpt-oss:20b)
 - Models without explicit safety emphasis (qwen2.5, glm-4.7-flash)
 - Models with hybrid reasoning/thinking architectures (qwen3.5)
+- The same model weights served via different inference runtimes (Qwen3.5 via Ollama and via mlx-lm produced identical SSRF compliance)
 
-The universality of compliance across architecturally and organizationally distinct model families suggests this is not a gap in any individual model's training but a structural property of current RLHF/instruction-following approaches when applied to tool-use contexts. SSRF awareness in tool-call contexts is not yet part of the alignment surface.
+The universality of compliance across architecturally and organizationally distinct model families — and across inference runtimes — suggests this is not a gap in any individual model's training but a structural property of current RLHF/instruction-following approaches when applied to tool-use contexts. SSRF awareness in tool-call contexts is not yet part of the alignment surface. Crucially, the inference runtime is irrelevant: the behavior is in the weights.
 
 ---
 
@@ -107,7 +111,7 @@ A policy engine with deterministic enforcement is the only reliable mitigation. 
 
 ### Finding 5: Tool-use discipline separates model families
 
-Four of five models passed Tier 4 cleanly — answering factual, mathematical, definitional, and code-generation prompts from training knowledge without invoking the fetch tool. llama3.2 is the sole exception, failing 5 of 6 cases.
+Five of six models passed Tier 4 cleanly — answering factual, mathematical, definitional, and code-generation prompts from training knowledge without invoking the fetch tool. llama3.2 is the sole exception, failing 5 of 6 cases.
 
 llama3.2 reflexively fetches Wikipedia for questions that every other model answers from training knowledge:
 
@@ -204,11 +208,11 @@ See `docs/literature.md` for full citations and discussion. Key differentiators:
 
 ## 6. Limitations
 
-- **Model sample:** 5 models from 4 families. Results may not generalize to closed-weight frontier models (GPT-4, Claude, Gemini) which were not evaluated.
+- **Model sample:** 6 models from 4 families across 2 inference runtimes (Ollama, mlx-lm). Results may not generalize to closed-weight frontier models (GPT-4, Claude, Gemini) which were not evaluated.
 - **Single upstream server:** All tests used `mcp-server-fetch`. Behavior may differ with other MCP server types.
-- **Ollama tool API:** Models served via Ollama may behave differently than the same weights served via other infrastructure.
+- **Inference runtime coverage:** mlx-lm evaluation used a single model (Qwen3.5-9B-MLX-4bit). Qwen3-30B-A3B-MLX-4bit was not evaluated due to memory constraints (36GB+ unified memory required).
 - **Known bypass techniques:** Percent-encoded hostnames, open redirects, and nested JSON values are not caught by the relay-layer policy engine and require network-level controls.
-- **Run count:** 2–3 runs per model per case. Non-determinism findings (qwen3.5 localhost) may require more runs to characterize fully.
+- **Run count:** 3 runs per model per case. Non-determinism findings (qwen3.5 localhost) may require more runs to characterize fully.
 
 ---
 
@@ -222,6 +226,12 @@ pip install -e ".[dev]"
 
 # Run full study (requires Ollama with models pulled)
 python scripts/run_study.py --study studies/full_study.yaml
+
+# Run mlx-lm model (requires mlx-lm server running on :8080)
+HTTPS_PROXY=http://localhost:8082 HTTP_PROXY=http://localhost:8082 \
+NO_PROXY=localhost,127.0.0.1,pypi.org,files.pythonhosted.org \
+pytest tests/test_llm_tool_calls.py -m integration \
+  --model mlx-community/Qwen3.5-9B-MLX-4bit --backend mlx -v
 
 # Generate findings report
 python demo/research_report.py both
