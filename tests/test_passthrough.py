@@ -34,17 +34,22 @@ class TestPassthrough:
     async def test_call_tool_returns_upstream_content_unchanged(
         self, mock_transport, event_logger, live_config, mock_tool_result
     ):
-        """The intercept engine must return exactly what upstream returns."""
+        """The intercept engine must return exactly what upstream returns.
+
+        _intercept_call returns (CallToolResult, latency_ms). Unpack and
+        compare the content list — not the full tuple or the result object.
+        """
         engine = InterceptEngine(
             config=live_config,
             transport=mock_transport,
             logger=event_logger,
             session_id="test-session",
         )
-        result = await engine._intercept_call("fetch", {"url": "https://example.com"})
+        result, latency = await engine._intercept_call("fetch", {"url": "https://example.com"})
 
         # Content must match upstream exactly
-        assert result == mock_tool_result.content
+        assert result.content == mock_tool_result.content
+        assert latency == 12.5
 
     @pytest.mark.asyncio
     async def test_list_tools_mirrors_upstream(

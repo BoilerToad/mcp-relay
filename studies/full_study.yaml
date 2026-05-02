@@ -48,6 +48,13 @@ models:
     enabled: false
     backend: ollama
 
+  # ── GGUF / llama.cpp models ───────────────────────────────────────────
+  # Requires: llama-server -m <path/to/model.gguf> --port 8080
+  - name: Manojb/Qwen3.5-27B-UD-IQ3_XXS.gguf:UD-IQ3_XXS  # ~11GB | Alibaba 27B | IQ3_XXS quant
+    enabled: false   # requires llama-server on :8080; not part of automated study
+    backend: llamacpp
+    notes: "llama.cpp GGUF via llama-server — tool calls confirmed (2026-05-01, 12/29 questions)"
+
   # ── Incompatible — no tools API ────────────────────────────────────────
   - name: deepseek-r1:7b          # 4.7GB  | DeepSeek | no tools API
     enabled: false

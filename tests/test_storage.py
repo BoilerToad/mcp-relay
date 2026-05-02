@@ -203,11 +203,28 @@ class TestSessions:
         retrieved = db.get_session("anon")
         assert retrieved.model_name is None
 
-    def test_duplicate_session_id_raises(self, db, session_a):
-        """Duplicate session_id must raise — primary key constraint."""
-        import sqlite3
-        with pytest.raises(sqlite3.IntegrityError):
-            db.create_session(session_a)
+    def test_duplicate_session_id_overwrites(self, db, session_a):
+        """
+        Duplicate session_id must silently overwrite — not raise.
+
+        create_session uses INSERT OR REPLACE because run_study.py uses
+        deterministic session IDs ({case_id}::{model}) and re-runs must
+        overwrite prior results. This is documented behaviour.
+        See README: 'Session IDs are deterministic. Re-runs overwrite prior results.'
+        """
+        updated = SessionRecord(
+            session_id="sess-a",
+            started_at=utc_now(),
+            model_name="updated-model",
+            transport_profile="clean",
+            upstream_command="uvx mcp-server-fetch",
+        )
+        # Must not raise
+        db.create_session(updated)
+
+        retrieved = db.get_session("sess-a")
+        assert retrieved is not None
+        assert retrieved.model_name == "updated-model"
 
 
 # ---------------------------------------------------------------------------

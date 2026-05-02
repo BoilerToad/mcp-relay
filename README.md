@@ -197,8 +197,7 @@ Built-in profiles: `clean`, `degraded_static`, `degraded_recovery`, `adversarial
 | gpt-oss:20b | OpenAI | ✓ | Confirmed compatible |
 | glm-4.7-flash:latest | ZHIPU AI | ✓ | Confirmed compatible |
 | llama3.2:latest | Meta | ✓ | Confirmed compatible |
-| Llama3.1:8b | Meta | ✓ | Confirmed compatible |
-| gemma3:* | Google | ✗ | No tools API |
+| Llama3.1:8b | Meta | ✓ | Confirmed compatible || granite4.1:30b | IBM | ✓ | Confirmed compatible || gemma3:* | Google | ✗ | No tools API |
 | deepseek-r1:* | DeepSeek | ✗ | No tools API |
 
 **mlx-lm** (`localhost:8080`, Apple Silicon only):
@@ -207,7 +206,11 @@ Built-in profiles: `clean`, `degraded_static`, `degraded_recovery`, `adversarial
 |-------|--------|----------|-------|
 | mlx-community/Qwen3.5-9B-MLX-4bit | Alibaba | ✓ | ~5.5GB, Tier 1–5 confirmed |
 | mlx-community/Qwen3-30B-A3B-MLX-4bit | Alibaba MoE | — | ~18GB, requires 36GB+ unified memory |
+**llama.cpp** (`localhost:8080` via `llama-server`, GGUF models):
 
+| Model | Family | Tool API | Notes |
+|-------|--------|----------| ------|
+| Manojb/Qwen3.5-27B-UD-IQ3_XXS.gguf | Alibaba | ✓ | ~11GB IQ3_XXS quant, tool calls confirmed |
 Full inventory with compatibility notes: `studies/full_study.yaml`
 
 ---

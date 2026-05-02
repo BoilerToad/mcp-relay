@@ -119,7 +119,6 @@ class TestEventLogger:
         )
         event_logger.log(event)
 
-        # File is line-buffered — flush to be safe before reading
         event_logger._file.flush()
 
         lines = Path(event_logger._path).read_text().strip().split("\n")
@@ -168,12 +167,13 @@ class TestEventLogger:
 
 class TestEventLoggerEdgeCases:
     """
-    Covers lines 103, 108-112, 121-122, 124-129, 132, 135 in core/logging.py:
+    Covers lines in core/logging.py:
       - echo_stderr path
       - storage dual-write path
       - storage error swallow (must never crash relay)
       - log rotation trigger
       - context manager (__enter__ / __exit__)
+      - rotate_mb=0 disables rotation
     """
 
     def _make_event(self, event_id: str = "e1") -> CallEvent:
@@ -275,30 +275,55 @@ class TestEventLoggerEdgeCases:
             pass
         assert logger._file.closed
 
+    def test_rotate_mb_zero_disables_rotation(self, tmp_path):
+        """rotate_mb=0 must disable rotation entirely — no backups created."""
+        log_path = tmp_path / "no_rotate.log"
+        logger = EventLogger(output_path=log_path, rotate_mb=0)
+
+        for i in range(5):
+            logger.log(self._make_event(f"e{i}"))
+        logger.close()
+
+        assert log_path.exists()
+        rotated = list(tmp_path.glob("no_rotate.*.log"))
+        assert len(rotated) == 0
+        lines = log_path.read_text().strip().split("\n")
+        assert len(lines) == 5
+
     def test_log_rotation_triggered_when_size_exceeded(self, tmp_path):
         """
-        When the log file exceeds rotate_mb, the current file is renamed
-        and a new one is opened. The new file should exist and be writable.
+        When the log file exceeds _rotate_bytes, the current file is renamed
+        and a new one is opened.
+
+        Triggers exactly one rotation by using a 1-byte threshold for the
+        first write, then disabling rotation before the second write.
+        This isolates the rotation mechanism from cascading rotations.
         """
         log_path = tmp_path / "rotating.log"
-        # Use rotate_mb=0 so any write triggers rotation
-        logger = EventLogger(
-            output_path=log_path,
-            rotate_mb=0,
-        )
+        logger = EventLogger(output_path=log_path, rotate_mb=1)
+        # 1 byte — first write (~200 bytes) triggers rotation immediately
+        logger._rotate_bytes = 1
+
         logger.log(self._make_event("before"))
-        # After rotation, a new file at the original path should exist
+
+        # Rotation fired — backup exists, new empty file at original path
         assert log_path.exists()
-        # At least one rotated backup should exist
         rotated = list(tmp_path.glob("rotating.*.log"))
         assert len(rotated) >= 1
+
+        # Disable further rotation so the second write stays in the new file
+        logger._rotate_bytes = None
 
         logger.log(self._make_event("after"))
         logger.close()
 
-        # New file should have the "after" event
-        new_lines = log_path.read_text().strip().split("\n")
-        assert any("after" in l for l in new_lines)
+        # Current file must contain "after"
+        current_lines = log_path.read_text().strip().split("\n")
+        assert any("after" in l for l in current_lines)
+
+        # The rotated backup must contain "before"
+        backup_content = rotated[0].read_text()
+        assert "before" in backup_content
 
 
 class TestInterceptLogging:

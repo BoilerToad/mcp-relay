@@ -89,7 +89,8 @@ class EventLogger:
     ) -> None:
         self._path = Path(output_path).expanduser()
         self._format = format
-        self._rotate_bytes = rotate_mb * 1024 * 1024
+        # rotate_mb=0 disables rotation entirely (useful for tests and short runs)
+        self._rotate_bytes = rotate_mb * 1024 * 1024 if rotate_mb > 0 else None
         self._echo = echo_stderr
         self._storage = storage
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,6 +117,9 @@ class EventLogger:
         self._file.close()
 
     def _maybe_rotate(self) -> None:
+        """Rotate the log file when it exceeds _rotate_bytes. No-op if rotation disabled."""
+        if self._rotate_bytes is None:
+            return
         try:
             size = self._path.stat().st_size
         except OSError:
