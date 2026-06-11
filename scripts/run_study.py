@@ -2,8 +2,13 @@
 """
 run_study.py — Multi-model, multi-run study runner for mcp-relay.
 
-Reads a study YAML config, then runs the pytest corpus once per model
-per run, collecting results into SQLite.  Prints a summary table at the end.
+Reads a study YAML config for run settings (runs_per_model, tiers, db,
+extra_pytest_args) and a separate JSON model registry (study_models.json)
+for the model list.  Runs the pytest corpus once per enabled model per run,
+collecting results into SQLite.  Prints a summary table at the end.
+
+Model registry: studies/study_models.json  (same format as probe_models.json)
+  Override with: --models-file <path>
 
 Usage:
     python scripts/run_study.py
@@ -11,15 +16,18 @@ Usage:
     python scripts/run_study.py --study studies/default.yaml --dry-run
     python scripts/run_study.py --study studies/default.yaml --tiers 1 4 5
     python scripts/run_study.py --study studies/default.yaml --runs 1
+    python scripts/run_study.py --model qwen2.5:latest qwen3.5:latest
+    python scripts/run_study.py --all-enabled
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -29,6 +37,7 @@ import yaml
 # ---------------------------------------------------------------------------
 
 ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_MODELS_FILE = ROOT / "studies" / "study_models.json"
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +47,10 @@ ROOT = Path(__file__).resolve().parent.parent
 def load_study(path: Path) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
+
+
+def load_models(path: Path) -> list[dict]:
+    return json.loads(path.read_text())["models"]
 
 
 def _local_get(url: str, timeout: float = 2.0):
@@ -129,6 +142,14 @@ def main() -> None:
         help="Override tiers to run (e.g. --tiers 1 4 5)"
     )
     parser.add_argument(
+        "--model", nargs="+", metavar="MODEL",
+        help="One or more model names to run (must exist and be enabled in study_models.json)"
+    )
+    parser.add_argument(
+        "--all-enabled", action="store_true",
+        help="Run all enabled models from study_models.json (default if no --model given)"
+    )
+    parser.add_argument(
         "--db", default=None,
         help="Override SQLite DB path"
     )
@@ -151,11 +172,27 @@ def main() -> None:
     db_path = args.db or config.get("db") or str(Path("~/.mcp-relay/research.db").expanduser())
     extra_args = config.get("extra_pytest_args") or []
 
-    enabled_models = [
-        {"name": m["name"], "backend": m.get("backend", "ollama")}
-        for m in config.get("models", [])
+    if not DEFAULT_MODELS_FILE.exists():
+        print(f"[error] Models file not found: {DEFAULT_MODELS_FILE}", file=sys.stderr)
+        sys.exit(1)
+
+    all_models = load_models(DEFAULT_MODELS_FILE)
+    enabled_by_name = {
+        m["name"]: {"name": m["name"], "backend": m.get("backend", "ollama")}
+        for m in all_models
         if m.get("enabled", True)
-    ]
+    }
+
+    if args.model:
+        bad = [name for name in args.model if name not in enabled_by_name]
+        if bad:
+            print(f"[error] Model(s) not found or not enabled in {DEFAULT_MODELS_FILE}:", file=sys.stderr)
+            for name in bad:
+                print(f"  - {name}", file=sys.stderr)
+            sys.exit(1)
+        enabled_models = [enabled_by_name[name] for name in args.model]
+    else:
+        enabled_models = list(enabled_by_name.values())
 
     print(f"\n{'='*60}")
     print(f"  mcp-relay study: {study_name}")
@@ -165,7 +202,7 @@ def main() -> None:
     print(f"  Runs per model:  {runs_per_model}")
     print(f"  Tiers:           {tiers or 'all'}")
     print(f"  DB:              {db_path}")
-    print(f"  Started:         {datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"  Started:         {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"{'='*60}\n")
 
     if not args.dry_run:

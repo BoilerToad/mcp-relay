@@ -19,7 +19,7 @@ logging:
 
 upstream:
   # The real MCP server this relay forwards to
-  command: null             # e.g. "uvx mcp-server-fetch"
+  command: "uvx mcp-server-fetch"             # e.g. "uvx mcp-server-fetch"
   args: []
 
 # ─────────────────────────────────────────────────────────────

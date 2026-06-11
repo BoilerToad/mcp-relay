@@ -1,0 +1,29 @@
+## Findings
+
+### Tool-Call Rate and Distribution
+
+The study's primary finding is the complete absence of tool-calling behavior by the qwen3.6-35b-a3b-6bit model. Across all 29 questions spanning four thematic areas—authoritarianism, trade, EU governance, and AI regulation—the model did not initiate a single tool call. This results in a tool-call rate of 0%. Consequently, no specific question themes triggered tool calls, indicating a uniform pattern of non-engagement with external tools across all topics. This suggests that the model either possesses a self-contained knowledge base sufficient to address the questions posed or lacks the capability or programming to initiate tool calls.
+
+### URL Selection and Fetch Behavior
+
+Given the absence of tool calls, there were no URL selections or fetch behaviors to analyze. The model did not attempt to access external sources, which precludes any assessment of its ability to identify or prioritize authoritative references. This lack of engagement with external data sources suggests that the model operates independently of real-time data fetching, relying entirely on its pre-existing knowledge base.
+
+### Relay Interception Results
+
+The mcp-relay, designed to intercept and log tool calls, recorded no activity during the study. There were zero tool calls, and consequently, no relay outcomes—neither allowed nor blocked. Additionally, there were no fetch errors, as no fetch attempts were made. The absence of relay interceptions indicates that the model's responses were generated without external data augmentation, and thus, the relay's role was effectively redundant in this instance.
+
+### Answer Quality and Tool Dependence
+
+Without tool usage, the model's answers were entirely dependent on its internal processing capabilities. As such, there is no comparative data to assess whether tool use would have improved response quality. The model's performance in answering the questions must be evaluated solely on its inherent capabilities. The lack of tool dependence suggests a design or operational choice to prioritize self-contained responses, which may have implications for the model's adaptability and accuracy in dynamic information environments.
+
+### Alignment and Safety Observations
+
+The study did not observe any attempts by the model to fetch data from unexpected, sensitive, or potentially problematic URLs, as no tool calls were made. This absence of external engagement inherently minimizes risks associated with alignment and safety concerning external data sources. However, it also limits the ability to evaluate the model's decision-making processes in selecting safe and appropriate sources. The lack of tool calls could be interpreted as a conservative operational stance, potentially reflecting a design focus on minimizing exposure to unverified external data.
+
+### Conclusions and Research Implications
+
+The findings from this study indicate that the qwen3.6-35b-a3b-6bit model operates without engaging external tools, suggesting a self-reliant approach to question answering. This behavior raises questions about the model's adaptability and accuracy when faced with queries that could benefit from real-time data or external validation. The absence of tool calls may reflect a deliberate design choice to ensure consistency and safety, but it also limits the model's potential for dynamic interaction with evolving information landscapes.
+
+Future research could explore the implications of this self-contained approach by comparing the performance of models with and without tool-calling capabilities across similar thematic areas. Additionally, experiments that enable tool-calling functionality could provide insights into how external data integration affects response quality and alignment with real-world information. Understanding the conditions under which tool calls are beneficial or necessary could inform the development of more versatile and contextually aware language models.
+
+In conclusion, while the qwen3.6-35b-a3b-6bit model demonstrates a stable and self-contained operational mode, the lack of tool use highlights an area for further exploration regarding the balance between internal knowledge reliance and external data integration. This study provides a foundational understanding of the model's current capabilities and sets the stage for future investigations into enhancing LLM tool-use behavior and agentic security.
