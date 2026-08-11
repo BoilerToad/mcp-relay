@@ -44,3 +44,4 @@ relay_recordings/
 coverage_report.txt
 integration_run.txt
 llm_test_run*.txt
+sweep-*.md
