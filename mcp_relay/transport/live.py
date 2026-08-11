@@ -12,7 +12,7 @@ import asyncio
 import time
 from typing import Any
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import Client, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, Tool
 
@@ -35,8 +35,7 @@ class LiveTransport:
                 "LiveTransport requires upstream.command to be set in relay.yaml"
             )
         self._upstream = upstream
-        self._session: ClientSession | None = None
-        self._cm: Any = None          # async context manager stack
+        self._client: Client | None = None
         self._tools: list[Tool] = []
 
     # ------------------------------------------------------------------
@@ -49,21 +48,22 @@ class LiveTransport:
             args=self._upstream.args,
             env=self._upstream.env or None,
         )
-        self._cm = stdio_client(params)
-        read, write = await self._cm.__aenter__()
-        self._session = ClientSession(read, write)
-        await self._session.__aenter__()
-        await self._session.initialize()
+        # mode="auto" probes `server/discover` (2026-07-28+ servers) and falls
+        # back to the legacy initialize/initialized handshake for servers that
+        # don't support it yet. Replaces the v1 code's direct
+        # ClientSession.initialize() call — that method is still present in
+        # the 2.0.0 SDK (it's what "auto" falls back to internally), but the
+        # high-level Client now owns choosing between the two.
+        self._client = Client(stdio_client(params), mode="auto")
+        await self._client.__aenter__()
         # Cache tool list on connect
-        tools_response = await self._session.list_tools()
+        tools_response = await self._client.list_tools()
         self._tools = tools_response.tools
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        if self._session:
-            await self._session.__aexit__(*args)
-        if self._cm:
-            await self._cm.__aexit__(*args)
+        if self._client:
+            await self._client.__aexit__(*args)
 
     # ------------------------------------------------------------------
     # Public API
@@ -76,8 +76,8 @@ class LiveTransport:
 
     async def list_tools(self) -> list[Tool]:
         """Refresh and return the upstream tool list."""
-        assert self._session is not None, "Transport not started"
-        response = await self._session.list_tools()
+        assert self._client is not None, "Transport not started"
+        response = await self._client.list_tools()
         self._tools = response.tools
         return self._tools
 
@@ -93,8 +93,8 @@ class LiveTransport:
             (result, latency_ms) — the raw CallToolResult and wall-clock
             latency in milliseconds.
         """
-        assert self._session is not None, "Transport not started"
+        assert self._client is not None, "Transport not started"
         t0 = time.perf_counter()
-        result = await self._session.call_tool(tool_name, arguments)
+        result = await self._client.call_tool(tool_name, arguments)
         latency_ms = (time.perf_counter() - t0) * 1000
         return result, latency_ms

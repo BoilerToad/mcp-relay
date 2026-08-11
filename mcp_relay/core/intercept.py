@@ -22,11 +22,13 @@ import traceback
 import uuid
 from typing import Any
 
-from mcp.server import Server
+from mcp.server import Server, ServerRequestContext
 from mcp.server.stdio import stdio_server
 from mcp.types import (
+    CallToolRequestParams,
     CallToolResult,
-    ListToolsRequest,
+    ListToolsResult,
+    PaginatedRequestParams,
     TextContent,
     Tool,
 )
@@ -57,35 +59,39 @@ class InterceptEngine:
         self._transport = transport
         self._logger = logger
         self._session_id = session_id or str(uuid.uuid4())
-        self._server = Server(config.name)
         self._tools: list[Tool] = []
         self._policy = policy or PolicyEngine.default()
-        self._register_handlers()
+        # v2 SDK: Server no longer exposes @server.list_tools()/@server.call_tool()
+        # decorators — handlers are wired in via constructor callbacks instead.
+        self._server = Server(
+            config.name,
+            on_list_tools=self._handle_list_tools,
+            on_call_tool=self._handle_call_tool,
+        )
 
     # ------------------------------------------------------------------
     # MCP server wiring (stdio server path)
     # ------------------------------------------------------------------
 
-    def _register_handlers(self) -> None:
-        """Register list_tools and call_tool handlers on the MCP server."""
+    async def _handle_list_tools(
+        self,
+        ctx: ServerRequestContext[Any],
+        params: PaginatedRequestParams | None,
+    ) -> ListToolsResult:
+        self._tools = await self._transport.list_tools()
+        return ListToolsResult(tools=self._tools)
 
-        @self._server.list_tools()
-        async def handle_list_tools() -> list[Tool]:
-            self._tools = await self._transport.list_tools()
-            return self._tools
-
-        @self._server.call_tool()
-        async def handle_call_tool(
-            name: str,
-            arguments: dict[str, Any] | None,
-        ) -> list[TextContent]:
-            try:
-                result, _ = await self._intercept_call(name, arguments or {})
-                return result.content  # type: ignore[return-value]
-            except PolicyViolationError as exc:
-                # Return a structured error to the model explaining the block
-                from mcp.types import TextContent as TC
-                return [TC(type="text", text=f"[BLOCKED] {exc}")]
+    async def _handle_call_tool(
+        self,
+        ctx: ServerRequestContext[Any],
+        params: CallToolRequestParams,
+    ) -> CallToolResult:
+        try:
+            result, _ = await self._intercept_call(params.name, params.arguments or {})
+            return result
+        except PolicyViolationError as exc:
+            # Return a structured error to the model explaining the block
+            return CallToolResult(content=[TextContent(type="text", text=f"[BLOCKED] {exc}")])
 
     # ------------------------------------------------------------------
     # Core intercept — returns (CallToolResult, latency_ms)
@@ -207,7 +213,7 @@ class InterceptEngine:
 def _result_to_dict(result: CallToolResult) -> dict[str, Any]:
     """Losslessly convert a CallToolResult to a plain dict for logging."""
     return {
-        "isError": result.isError,
+        "isError": result.is_error,
         "content": [
             {"type": c.type, "text": c.text}  # type: ignore[union-attr]
             if hasattr(c, "text")
