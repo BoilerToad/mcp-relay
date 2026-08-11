@@ -106,7 +106,12 @@ async def test_relay_live_passthrough_with_fetch_server(tmp_path, ollama_model):
     config.logging.output = str(tmp_path / "integration.log")
     config.transport.default_mode = TransportMode.LIVE
     config.upstream.command = "uvx"
-    config.upstream.args = ["mcp-server-fetch"]
+    # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
+    # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
+    # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
+    # compatible SDK for this externally-maintained subprocess until upstream
+    # updates.
+    config.upstream.args = ["--with", "mcp<2.0", "mcp-server-fetch"]
 
     relay = Relay(config=config)
 
@@ -123,7 +128,7 @@ async def test_relay_live_passthrough_with_fetch_server(tmp_path, ollama_model):
             {"url": "https://httpbin.org/get"},
         )
         assert result is not None
-        assert not result.isError
+        assert not result.is_error
         assert latency > 0
         assert len(result.content) > 0
 
@@ -150,7 +155,12 @@ async def test_relay_captures_all_tool_calls_in_log(tmp_path, ollama_model):
     config.logging.output = str(tmp_path / "multi.log")
     config.transport.default_mode = TransportMode.LIVE
     config.upstream.command = "uvx"
-    config.upstream.args = ["mcp-server-fetch"]
+    # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
+    # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
+    # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
+    # compatible SDK for this externally-maintained subprocess until upstream
+    # updates.
+    config.upstream.args = ["--with", "mcp<2.0", "mcp-server-fetch"]
 
     relay = Relay(config=config)
     n_calls = 3
@@ -181,7 +191,12 @@ async def test_relay_log_captures_payload_and_latency(tmp_path, ollama_model):
     config.logging.output = str(tmp_path / "payload.log")
     config.transport.default_mode = TransportMode.LIVE
     config.upstream.command = "uvx"
-    config.upstream.args = ["mcp-server-fetch"]
+    # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
+    # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
+    # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
+    # compatible SDK for this externally-maintained subprocess until upstream
+    # updates.
+    config.upstream.args = ["--with", "mcp<2.0", "mcp-server-fetch"]
 
     relay = Relay(config=config)
     target_url = "https://httpbin.org/uuid"
@@ -225,7 +240,12 @@ async def test_relay_identity_response_unchanged(tmp_path, ollama_model):
     config.logging.output = str(tmp_path / "identity.log")
     config.transport.default_mode = TransportMode.LIVE
     config.upstream.command = "uvx"
-    config.upstream.args = ["mcp-server-fetch"]
+    # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
+    # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
+    # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
+    # compatible SDK for this externally-maintained subprocess until upstream
+    # updates.
+    config.upstream.args = ["--with", "mcp<2.0", "mcp-server-fetch"]
 
     url = "https://httpbin.org/get"
 
@@ -235,14 +255,14 @@ async def test_relay_identity_response_unchanged(tmp_path, ollama_model):
         relay_result, _ = await session.call_tool("fetch", {"url": url})
 
     # Call directly
-    params = StdioServerParameters(command="uvx", args=["mcp-server-fetch"])
+    params = StdioServerParameters(command="uvx", args=["--with", "mcp<2.0", "mcp-server-fetch"])
     async with stdio_client(params) as (r, w):
         async with ClientSession(r, w) as direct_session:
             await direct_session.initialize()
             direct_result = await direct_session.call_tool("fetch", {"url": url})
 
     # isError must match
-    assert relay_result.isError == direct_result.isError
+    assert relay_result.is_error == direct_result.is_error
 
     # Content type must match (text vs image etc.)
     assert len(relay_result.content) == len(direct_result.content)

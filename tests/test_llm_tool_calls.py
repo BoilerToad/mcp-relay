@@ -270,7 +270,7 @@ def _mcp_tool_to_ollama(tool: Any) -> dict:
         "function": {
             "name":        tool.name,
             "description": tool.description or "",
-            "parameters":  tool.inputSchema,
+            "parameters":  tool.input_schema,
         },
     }
 
@@ -362,9 +362,13 @@ def relay_config() -> RelayConfig:
     # Node/Python subprocess proxy env vars are unreliable across uvx isolation;
     # the --proxy flag is the authoritative way to route fetch calls through mitmweb.
     proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-    config.upstream.args = (
-        ["mcp-server-fetch", "--proxy", proxy] if proxy else ["mcp-server-fetch"]
-    )
+    # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
+    # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
+    # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
+    # compatible SDK for this externally-maintained subprocess until upstream
+    # updates.
+    base_args = ["--with", "mcp<2.0", "mcp-server-fetch"]
+    config.upstream.args = base_args + ["--proxy", proxy] if proxy else base_args
     config.upstream.env = dict(os.environ)
     return config
 

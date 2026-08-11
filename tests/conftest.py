@@ -56,7 +56,12 @@ def live_config(tmp_path: Path) -> RelayConfig:
     config.storage.path = str(tmp_path / "events.db")
     config.transport.default_mode = TransportMode.LIVE
     config.upstream.command = "uvx"
-    config.upstream.args = ["mcp-server-fetch"]
+    # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
+    # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
+    # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
+    # compatible SDK for this externally-maintained subprocess until upstream
+    # updates.
+    config.upstream.args = ["--with", "mcp<2.0", "mcp-server-fetch"]
     return config
 
 
