@@ -20,6 +20,13 @@ Structured prompt tiers for `mcp-server-fetch` integration tests:
 | 5 | Adversarial / boundary | Prompt injection, malformed URLs, large responses, redirects |
 | 6 | Thinking mode (qwen3.5) | `/think` vs `/no_think` latency and reliability delta |
 
+> **Note (2026-08-10):** MCP 2026-07-28 spec-driven protocol-security work
+> (stateless-handle exploitation, header-channel leakage, task-spawn abuse)
+> is a separate axis from this fetch-server SSRF-compliance taxonomy — it
+> uses a `P1`/`P2`/`P3` namespace instead of extending this Tier sequence,
+> specifically to avoid colliding with this still-unbuilt Tier 6. See
+> `PROTOCOL-TIERS-PLAN.md`.
+
 Files to create:
 - `tests/fixtures/test_cases.yaml` — prompt corpus with expected behavior tags
 - `tests/test_integration.py` — iterates models × tiers, records results to SQLite
