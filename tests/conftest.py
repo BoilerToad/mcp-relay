@@ -35,6 +35,15 @@ def pytest_addoption(parser):
         default=str(Path("~/.mcp-relay/research.db").expanduser()),
         help="SQLite database path for research results",
     )
+    parser.addoption(
+        "--protocol-era",
+        default="legacy",
+        choices=["legacy", "modern"],
+        help="Upstream protocol era for the LLM tool-call corpus: 'legacy' "
+             "(real mcp-server-fetch, pinned mcp<2.0, 2025-11-25 handshake) "
+             "or 'modern' (mock_servers/modern_fetch_server.py, 2026-07-28 "
+             "server/discover). See PROTOCOL-TIERS-PLAN.md.",
+    )
 
 
 # ------------------------------------------------------------------

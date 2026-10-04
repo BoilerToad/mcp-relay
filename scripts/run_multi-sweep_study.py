@@ -22,7 +22,7 @@ Usage:
     python scripts/run_multi-sweep_study.py --model qwen2.5:latest --tiers 4 --runs 3
     python scripts/run_multi-sweep_study.py --model llama3.2:latest --runs 5
     python scripts/run_multi-sweep_study.py --model qwen2.5:latest --tiers 4 5 --runs 3 \
-        --report sweep-report.md
+        --report sweep-reports/sweep-report.md
     python scripts/run_multi-sweep_study.py --model qwen2.5:latest --tiers 4 --runs 3 --dry-run
 """
 
@@ -152,12 +152,15 @@ def parse_junit_results(xml_path: Path) -> dict[str, str]:
 # Summarization
 # ---------------------------------------------------------------------------
 
-def summarize(
-    model: str,
+def _compute_rows(
     runs: int,
     per_run_results: list[dict[str, str]],
-) -> str:
-    """Build a markdown table: case_id vs. per-run outcome + fail rate."""
+) -> tuple[list[dict], dict]:
+    """Reduce per-run outcome dicts into per-case rows + aggregate totals.
+
+    Shared by both the markdown renderer (for --report) and the plain
+    terminal renderer, so the two views can never drift out of sync.
+    """
     case_ids: list[str] = []
     seen = set()
     for run_results in per_run_results:
@@ -166,47 +169,88 @@ def summarize(
                 seen.add(case_id)
                 case_ids.append(case_id)
 
-    lines = [f"### {model} — {runs} runs\n"]
-    header = ["Case"] + [f"Run {i+1}" for i in range(runs)] + ["Fail rate"]
-    lines.append("| " + " | ".join(header) + " |")
-    lines.append("|" + "---|" * len(header))
-
+    rows = []
     total_failed = total_xfailed = total_passed = total_other = 0
 
     for case_id in case_ids:
-        row = [case_id]
-        failed = xfailed = passed = other = 0
-        for run_results in per_run_results:
-            outcome = run_results.get(case_id, "missing")
-            symbol = {
-                "passed": "PASS",
-                "failed": "**FAIL**",
-                "xfailed": "xfail",
-                "skipped": "skip",
-                "error": "**ERROR**",
-                "missing": "?",
-            }.get(outcome, outcome)
-            row.append(symbol)
-            if outcome == "failed" or outcome == "error":
-                failed += 1
-            elif outcome == "xfailed":
-                xfailed += 1
-            elif outcome == "passed":
-                passed += 1
-            else:
-                other += 1
-        row.append(f"{failed}/{runs}")
-        lines.append("| " + " | ".join(row) + " |")
+        outcomes = [run_results.get(case_id, "missing") for run_results in per_run_results]
+        failed = sum(1 for o in outcomes if o in ("failed", "error"))
+        xfailed = sum(1 for o in outcomes if o == "xfailed")
+        passed = sum(1 for o in outcomes if o == "passed")
+        other = len(outcomes) - failed - xfailed - passed
+        rows.append({"case_id": case_id, "outcomes": outcomes, "failed": failed})
         total_failed += failed
         total_xfailed += xfailed
         total_passed += passed
         total_other += other
 
-    total_runs = len(case_ids) * runs
+    totals = {
+        "failed": total_failed,
+        "xfailed": total_xfailed,
+        "passed": total_passed,
+        "other": total_other,
+        "total_runs": len(case_ids) * runs,
+    }
+    return rows, totals
+
+
+_MD_SYMBOLS = {
+    "passed": "PASS", "failed": "**FAIL**", "xfailed": "xfail",
+    "skipped": "skip", "error": "**ERROR**", "missing": "?",
+}
+_TXT_SYMBOLS = {
+    "passed": "PASS", "failed": "FAIL", "xfailed": "XFAIL",
+    "skipped": "SKIP", "error": "ERROR", "missing": "?",
+}
+
+
+def summarize_markdown(model: str, runs: int, rows: list[dict], totals: dict) -> str:
+    """Build the markdown table written to --report (unchanged format)."""
+    lines = [f"### {model} — {runs} runs\n"]
+    header = ["Case"] + [f"Run {i+1}" for i in range(runs)] + ["Fail rate"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "---|" * len(header))
+
+    for row in rows:
+        line = (
+            [row["case_id"]]
+            + [_MD_SYMBOLS.get(o, o) for o in row["outcomes"]]
+            + [f"{row['failed']}/{runs}"]
+        )
+        lines.append("| " + " | ".join(line) + " |")
+
     lines.append("")
     lines.append(
-        f"**Total: {total_failed}/{total_runs} failed** "
-        f"({total_passed} passed, {total_xfailed} xfailed, {total_other} other)"
+        f"**Total: {totals['failed']}/{totals['total_runs']} failed** "
+        f"({totals['passed']} passed, {totals['xfailed']} xfailed, {totals['other']} other)"
+    )
+    return "\n".join(lines)
+
+
+def summarize_terminal(model: str, runs: int, rows: list[dict], totals: dict) -> str:
+    """Build a plain, pipe-free, column-aligned table for terminal display."""
+    headers = ["Case"] + [f"Run {i+1}" for i in range(runs)] + ["Fail"]
+    table_rows = [
+        [row["case_id"]]
+        + [_TXT_SYMBOLS.get(o, o) for o in row["outcomes"]]
+        + [f"{row['failed']}/{runs}"]
+        for row in rows
+    ]
+    widths = [
+        max(len(headers[i]), max((len(r[i]) for r in table_rows), default=0))
+        for i in range(len(headers))
+    ]
+
+    def fmt_row(cells: list[str]) -> str:
+        return "  ".join(cell.ljust(widths[i]) for i, cell in enumerate(cells))
+
+    sep = "-" * (sum(widths) + 2 * (len(widths) - 1))
+    lines = [f"{model} — {runs} runs", sep, fmt_row(headers), sep]
+    lines += [fmt_row(r) for r in table_rows]
+    lines.append(sep)
+    lines.append(
+        f"Total: {totals['failed']}/{totals['total_runs']} failed "
+        f"({totals['passed']} passed, {totals['xfailed']} xfailed, {totals['other']} other)"
     )
     return "\n".join(lines)
 
@@ -238,12 +282,18 @@ def main() -> None:
         help="Number of repeated runs per model (default: 3)"
     )
     parser.add_argument(
+        "--protocol-era", default="legacy", choices=["legacy", "modern"],
+        help="Upstream protocol era passed through to pytest's --protocol-era "
+             "(default: legacy). See PROTOCOL-TIERS-PLAN.md."
+    )
+    parser.add_argument(
         "--db", default=DEFAULT_DB,
         help=f"SQLite DB path for relay event storage (default: {DEFAULT_DB})"
     )
     parser.add_argument(
         "--report", default=None, metavar="PATH",
-        help="Also write the markdown summary to this file"
+        help="Also write the markdown summary to this file "
+             "(conventionally under sweep-reports/, which is gitignored)"
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -274,6 +324,7 @@ def main() -> None:
     print(f"  Backend:  {args.backend}")
     print(f"  Tiers:    {args.tiers or 'all'}")
     print(f"  Runs:     {args.runs}")
+    print(f"  Era:      {args.protocol_era}")
     print(f"  DB:       {args.db}")
     print(f"  Started:  {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     print(f"{'='*60}\n")
@@ -305,7 +356,8 @@ def main() -> None:
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 junit_path = Path(tmpdir) / "results.xml"
-                cmd = build_pytest_cmd(model, args.backend, args.db, args.tiers, junit_path, [])
+                extra_args = ["--protocol-era", args.protocol_era]
+                cmd = build_pytest_cmd(model, args.backend, args.db, args.tiers, junit_path, extra_args)
 
                 print(f"[{'DRY RUN' if args.dry_run else 'RUN'}] {label}")
                 if args.dry_run:
@@ -326,9 +378,9 @@ def main() -> None:
                 print(f"  → {passed}p {failed}f {xfailed}xf  {fmt_duration(duration)}\n")
 
         if not args.dry_run:
-            section = summarize(model, args.runs, per_run_results)
-            report_sections.append(section)
-            print(section)
+            rows, totals = _compute_rows(args.runs, per_run_results)
+            report_sections.append(summarize_markdown(model, args.runs, rows, totals))
+            print(summarize_terminal(model, args.runs, rows, totals))
             print()
 
     sweep_duration = time.monotonic() - sweep_start
@@ -338,11 +390,13 @@ def main() -> None:
 
     if args.report and report_sections:
         report_path = Path(args.report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
         header = (
             f"# Multi-sweep study report\n\n"
             f"Backend: {args.backend}  \n"
             f"Tiers: {args.tiers or 'all'}  \n"
             f"Runs per model: {args.runs}  \n"
+            f"Protocol era: {args.protocol_era}  \n"
             f"Generated: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}\n\n"
         )
         report_path.write_text(header + "\n\n".join(report_sections) + "\n")

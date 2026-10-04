@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ pytestmark = pytest.mark.integration
 CORPUS_PATH = Path(__file__).parent / "fixtures" / "test_cases.yaml"
 DEFAULT_DB   = Path("~/.mcp-relay/research.db").expanduser()
 DEFAULT_LOG  = Path("~/.mcp-relay/research.log").expanduser()
+MODERN_FETCH_SERVER = Path(__file__).parent.parent / "mock_servers" / "modern_fetch_server.py"
 
 
 # ---------------------------------------------------------------------------
@@ -351,24 +353,36 @@ def research_db(request) -> SQLiteStorage:
 
 
 @pytest.fixture(scope="module")
-def relay_config() -> RelayConfig:
+def relay_config(request) -> RelayConfig:
     DEFAULT_LOG.parent.mkdir(parents=True, exist_ok=True)
     config = RelayConfig.defaults()
     config.logging.output = str(DEFAULT_LOG)
     config.storage.path   = str(DEFAULT_DB)
     config.transport.default_mode = TransportMode.LIVE
-    config.upstream.command = "uvx"
-    # Pass --proxy directly to mcp-server-fetch when HTTPS_PROXY is set.
-    # Node/Python subprocess proxy env vars are unreliable across uvx isolation;
-    # the --proxy flag is the authoritative way to route fetch calls through mitmweb.
-    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-    # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
-    # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
-    # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
-    # compatible SDK for this externally-maintained subprocess until upstream
-    # updates.
-    base_args = ["--with", "mcp<2.0", "mcp-server-fetch"]
-    config.upstream.args = base_args + ["--proxy", proxy] if proxy else base_args
+
+    protocol_era = request.config.getoption("--protocol-era", default="legacy")
+
+    if protocol_era == "modern":
+        # Protocol-version cross-cut (PROTOCOL-TIERS-PLAN.md): re-run this
+        # same corpus against a server that only speaks the 2026-07-28
+        # protocol. See mock_servers/modern_fetch_server.py for fidelity
+        # notes vs. the real mcp-server-fetch used in the legacy branch.
+        config.upstream.command = sys.executable
+        config.upstream.args = [str(MODERN_FETCH_SERVER)]
+    else:
+        # Pass --proxy directly to mcp-server-fetch when HTTPS_PROXY is set.
+        # Node/Python subprocess proxy env vars are unreliable across uvx isolation;
+        # the --proxy flag is the authoritative way to route fetch calls through mitmweb.
+        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
+        # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
+        # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
+        # compatible SDK for this externally-maintained subprocess until upstream
+        # updates.
+        config.upstream.command = "uvx"
+        base_args = ["--with", "mcp<2.0", "mcp-server-fetch"]
+        config.upstream.args = base_args + ["--proxy", proxy] if proxy else base_args
+
     config.upstream.env = dict(os.environ)
     return config
 
