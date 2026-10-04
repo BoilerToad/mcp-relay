@@ -114,7 +114,7 @@ policy:
   extra_blocked_hosts: [] # additional hostnames to block
 ```
 
-SSRF protection handles decimal IP notation (`2852039166`), IPv6-mapped IPv4 (`::ffff:169.254.169.254`), IPv6 ULA/link-local, and named metadata hostnames. See `docs/testing-strategy.md` for bypass coverage and known limitations.
+SSRF protection handles decimal IP notation (`2852039166`), IPv6-mapped IPv4 (`::ffff:169.254.169.254`), IPv6 ULA/link-local, and named metadata hostnames. It checks the URL as written and does no DNS resolution, so it does not catch hostnames that resolve to private IPs, open redirects, or DNS rebinding — treat it as one layer alongside server-side connection-time validation and network egress controls, not a complete SSRF defense. See `docs/testing-strategy.md` for bypass coverage and known limitations, or `docs/ssrf-and-compliance.md` for what SSRF means here and why enforcement lives at this layer rather than the model.
 
 ---
 
@@ -197,7 +197,9 @@ Built-in profiles: `clean`, `degraded_static`, `degraded_recovery`, `adversarial
 | gpt-oss:20b | OpenAI | ✓ | Confirmed compatible |
 | glm-4.7-flash:latest | ZHIPU AI | ✓ | Confirmed compatible |
 | llama3.2:latest | Meta | ✓ | Confirmed compatible |
-| Llama3.1:8b | Meta | ✓ | Confirmed compatible || granite4.1:30b | IBM | ✓ | Confirmed compatible || gemma3:* | Google | ✗ | No tools API |
+| Llama3.1:8b | Meta | ✓ | Confirmed compatible |
+| granite4.1:30b | IBM | ✓ | Confirmed compatible |
+| gemma3:* | Google | ✗ | No tools API |
 | deepseek-r1:* | DeepSeek | ✗ | No tools API |
 
 **mlx-lm** (`localhost:8080`, Apple Silicon only):
@@ -206,6 +208,7 @@ Built-in profiles: `clean`, `degraded_static`, `degraded_recovery`, `adversarial
 |-------|--------|----------|-------|
 | mlx-community/Qwen3.5-9B-MLX-4bit | Alibaba | ✓ | ~5.5GB, Tier 1–5 confirmed |
 | mlx-community/Qwen3-30B-A3B-MLX-4bit | Alibaba MoE | — | ~18GB, requires 36GB+ unified memory |
+
 **llama.cpp** (`localhost:8080` via `llama-server`, GGUF models):
 
 | Model | Family | Tool API | Notes |

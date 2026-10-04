@@ -17,6 +17,10 @@ pytest -m integration                                 # LLM behavioral tests (re
 pytest -m integration -k "tier1"                      # single tier
 pytest -m integration --model qwen2.5:latest          # specific Ollama model
 pytest -m integration --model mlx-community/Qwen3.5-9B-MLX-4bit --backend mlx  # mlx-lm model
+pytest -m integration --model qwen2.5:latest --protocol-era modern  # re-run corpus against
+                                                       # the 2026-07-28 mock server instead of
+                                                       # the real (legacy) mcp-server-fetch —
+                                                       # see PROTOCOL-TIERS-PLAN.md
 ```
 
 ---
@@ -155,6 +159,8 @@ These tests validate relay correctness. All are pure unit tests using mocks unle
 
 ### `TestSSRFRule` — Core blocking behavior (15 tests)
 
+See `docs/ssrf-and-compliance.md` for what these rules are protecting against and why enforcement lives here rather than at the model layer.
+
 | Test | What it checks |
 |------|---------------|
 | `test_blocks_link_local_metadata` | `169.254.169.254` is blocked |
@@ -175,7 +181,7 @@ These tests validate relay correctness. All are pure unit tests using mocks unle
 
 ---
 
-### `TestSSRFRuleBypassAttempts` — Evasion resistance (8 tests)
+### `TestSSRFRuleBypassAttempts` — Evasion resistance (14 tests)
 
 These tests document the scope of bypass protection and its known limits.
 
@@ -187,19 +193,27 @@ These tests document the scope of bypass protection and its known limits.
 | `test_blocks_ipv6_ula` | `fd00::1` (ULA range) | **BLOCKED** |
 | `test_blocks_ipv6_link_local` | `fe80::1` | **BLOCKED** |
 | `test_blocks_shared_address_space` | `100.64.0.1` (RFC 6598) | **BLOCKED** |
+| `test_blocks_url_with_unparseable_host` (5 params) | `http://[::1`, `http://[not-an-ip]/`, `http:///etc/passwd`, `http://:80/`, `file:///etc/passwd` | **BLOCKED** — fail closed when a URL's host can't be determined |
+| `test_unparseable_host_warns_in_warn_mode` | `http://[::1` with `action=WARN` | **WARN** |
+| `test_allows_schemeless_value` (4 params) | `some-identifier`, `example.com/path`, `example.com:8080/x`, `mailto:a@b.com` under `target` | **ALLOW** — no `://`, and `http://<value>` points at a public host |
+| `test_blocks_schemeless_private_target` (3 params) | `localhost:8080`, `169.254.169.254/latest`, `[::1]/admin` | **BLOCKED** — checked as `http://<value>`, since a lenient upstream may prepend a scheme |
+| `test_block_reason_does_not_claim_dns_resolution` | `http://169.254.169.254/` | Reason says "private/reserved", never "resolves" |
 | `test_known_limit_url_encoded_host` | `%31%36%39...` (percent-encoded) | **SKIP** — documented limitation |
 | `test_known_limit_open_redirect` | Public URL → private IP redirect | **ALLOW** — documented limitation |
+| `test_known_limit_hostname_resolving_to_private_ip` | `169.254.169.254.nip.io` (DNS → metadata IP) | **ALLOW** — documented limitation |
 
-**Known limitations** (both require network-level mitigation via mitmproxy allowlist):
+**Known limitations** (all require network-level mitigation via mitmproxy allowlist):
 - Percent-encoded hostnames: `urlparse` does not decode percent-encoded host components
 - Open redirects: the relay sees only the initial URL; redirect targets are not inspected
+- Hostnames resolving to private IPs: no DNS resolution is performed, so a hostname such as `169.254.169.254.nip.io` or an attacker-controlled domain pointing at a private address is **ALLOWED**. Adding resolution at the relay would not fully close this — the check runs at parse time, before the upstream server connects, so it remains open to DNS rebinding.
 
 ---
 
-### `TestAllowlistRule` — Allowlist enforcement (8 tests)
+### `TestAllowlistRule` — Allowlist enforcement (9 tests)
 
 | Test | What it checks |
 |------|---------------|
+| `test_blocks_url_with_unparseable_host` (3 params) | `file:///etc/passwd`, `http://[::1`, `http:///admin` — fails closed |
 | `test_empty_allowlist_allows_all` | Empty list = open policy |
 | `test_exact_host_allowed` | Exact hostname match |
 | `test_unlisted_host_blocked` | Non-listed host is blocked |
@@ -348,6 +362,8 @@ The `research_model` fixture probes the target model with a dummy tool call befo
 | `t5_localhost_probe` | `localhost:8080` internal probe | SSRF blocked by relay policy engine |
 
 For `t5_ssrf_private_ip` and `t5_localhost_probe`: with `ssrf_protection: true` (default), the relay policy engine intercepts and blocks the call before it reaches the network. `PolicyViolationError` is caught in the test harness and recorded as `blocked=True`. Network-level verification via mitmproxy confirms no traffic escapes to these addresses.
+
+See `docs/ssrf-and-compliance.md` for why these cases are observational (no hard assertion on the model) and what "pass" actually means here.
 
 ---
 
