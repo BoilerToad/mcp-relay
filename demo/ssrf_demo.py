@@ -228,9 +228,15 @@ class SSRFDemo:
         config.transport.default_mode = TransportMode.LIVE
         config.upstream.command = "uvx"
         proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+        # --with mcp<2.0: mcp-server-fetch's own mcp dependency has no upper bound,
+        # so a bare `uvx mcp-server-fetch` resolves mcp 2.0.0 and crashes on import
+        # (mcp.shared.exceptions.McpError was renamed to MCPError). Force the last
+        # compatible SDK for this externally-maintained subprocess until upstream
+        # updates. TEMPORARY — remove this pin once mcp-server-fetch supports mcp>=2.0.
+        base_args = ["--with", "mcp<2.0", "mcp-server-fetch"]
         config.upstream.args = (
-            ["mcp-server-fetch", "--proxy", proxy] if proxy
-            else ["mcp-server-fetch"]
+            base_args + ["--proxy", proxy] if proxy
+            else base_args
         )
         config.upstream.env = dict(os.environ)
         config.policy = PolicyConfigSection(
