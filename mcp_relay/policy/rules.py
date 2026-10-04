@@ -79,9 +79,17 @@ def _parse_host(url: str) -> str | None:
         return None
 
 
+def _is_url_shaped(url: str) -> bool:
+    # "://" rather than urlparse's scheme: urlparse reads "localhost:8080"
+    # and "example.com:8080/x" as scheme + path
+    return "://" in url
+
+
 def _is_private_host(host: str) -> bool:
     """
-    Return True if host is a blocked hostname or resolves to a private/reserved IP.
+    Return True if host is a blocked hostname or is a literal private/reserved IP.
+
+    No DNS resolution is performed — only IP literals and named hosts are checked.
 
     Handles:
     - Standard dotted-decimal IPv4 (127.0.0.1, 169.254.169.254)
@@ -94,6 +102,10 @@ def _is_private_host(host: str) -> bool:
     - Percent-encoded hostnames — urlparse does not decode
     - Open redirects (public URL → private IP) — redirect target not inspected
     - URLs embedded inside JSON string values in tool arguments
+    - Hostnames that resolve to a private IP (e.g. 169.254.169.254.nip.io,
+      attacker-controlled DNS) — not resolved here; even with resolution, a
+      parse-time check is open to DNS rebinding, since the upstream server
+      connects later
     """
     if host.lower() in _BLOCKED_HOSTNAMES:
         return True
@@ -158,13 +170,24 @@ class SSRFRule(BaseRule):
 
         host = _parse_host(url)
         if host is None:
-            return PolicyDecision.allow(self.name)
+            if _is_url_shaped(url):
+                # A URL whose host we can't determine: fail closed, since a
+                # downstream parser may still resolve it somewhere private
+                reason = f"SSRF: could not determine host for '{url}' — failing closed"
+                if self._action is Action.BLOCK:
+                    return PolicyDecision.block(self.name, reason, url=url)
+                return PolicyDecision.warn(self.name, reason, url=url)
+            # Scheme-less value: a lenient upstream may prepend http://
+            # (cf. CERT-AgID, Apr 2026), so check where that would point
+            host = _parse_host("http://" + url)
+            if host is None:
+                return PolicyDecision.allow(self.name)
 
         blocked = _is_private_host(host) or host.lower() in self._extra
         if not blocked:
             return PolicyDecision.allow(self.name)
 
-        reason = f"SSRF: host '{host}' resolves to a private/reserved address"
+        reason = f"SSRF: host '{host}' is a blocked hostname or private/reserved IP address"
         if self._action is Action.BLOCK:
             return PolicyDecision.block(self.name, reason, url=url, host=host)
         return PolicyDecision.warn(self.name, reason, url=url, host=host)
@@ -209,7 +232,13 @@ class AllowlistRule(BaseRule):
 
         host = _parse_host(url)
         if host is None:
-            return PolicyDecision.allow(self.name)
+            if not _is_url_shaped(url):
+                return PolicyDecision.allow(self.name)
+            # Fail closed: a host we can't determine can't be on the allowlist
+            reason = f"Allowlist: could not determine host for '{url}' — failing closed"
+            if self._action is Action.BLOCK:
+                return PolicyDecision.block(self.name, reason, url=url)
+            return PolicyDecision.warn(self.name, reason, url=url)
 
         if self._matches(host):
             return PolicyDecision.allow(self.name)

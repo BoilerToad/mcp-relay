@@ -114,7 +114,8 @@ class TestSSRFRuleBypassAttempts:
 
     Some bypass techniques (decimal IP, IPv6-mapped) ARE caught because
     Python's ipaddress module normalises them before network lookup.
-    Others (URL-encoded hosts, open redirects) are NOT caught at the
+    Others (URL-encoded hosts, open redirects, hostnames that resolve to
+    private IPs) are NOT caught at the
     URL-parsing layer — these are documented as known limitations that
     require a network-level control (e.g. mitmproxy allowlist).
     """
@@ -158,6 +159,59 @@ class TestSSRFRuleBypassAttempts:
         d = self._check("http://100.64.0.1/")
         assert d.is_blocked, "Shared address space should be blocked"
 
+    # -- Fail closed when a URL's host can't be determined --
+    # If the relay can't tell where a URL points, a downstream parser may
+    # still resolve it somewhere — allowing it would be a fail-open check
+    # (cf. CERT-AgID, Apr 2026, docs/literature.md §1.2).
+
+    @pytest.mark.parametrize("url", [
+        "http://[::1",            # urlparse raises: Invalid IPv6 URL
+        "http://[not-an-ip]/",    # urlparse raises: bracketed non-IP
+        "http:///etc/passwd",     # scheme, empty authority
+        "http://:80/",            # port, no host
+        "file:///etc/passwd",     # local file read, no host
+    ])
+    def test_blocks_url_with_unparseable_host(self, url):
+        d = self._check(url)
+        assert d.is_blocked, f"URL with undeterminable host should fail closed: {url}"
+        assert "could not determine host" in d.reason
+
+    def test_unparseable_host_warns_in_warn_mode(self):
+        rule = SSRFRule(action=Action.WARN)
+        d = rule.check("fetch", {"url": "http://[::1"})
+        assert d.action == Action.WARN
+        assert not d.is_blocked
+
+    @pytest.mark.parametrize("value", [
+        "some-identifier",        # non-URL value under a URL-ish key
+        "example.com/path",       # scheme-less public host
+        "example.com:8080/x",     # urlparse reads 'example.com' as a scheme
+        "mailto:a@b.com",
+    ])
+    def test_allows_schemeless_value(self, value):
+        """No '://' and no private target — ALLOW, so non-fetch tools whose
+        args use keys like 'target' aren't blocked."""
+        d = self.rule.check("lookup", {"target": value})
+        assert d.action == Action.ALLOW
+
+    @pytest.mark.parametrize("value", [
+        "localhost:8080",           # urlparse reads 'localhost' as a scheme
+        "169.254.169.254/latest",
+        "[::1]/admin",
+    ])
+    def test_blocks_schemeless_private_target(self, value):
+        """A lenient upstream may prepend http:// (as CERT-AgID's build_target
+        did), so a scheme-less value is checked as http://<value>."""
+        d = self._check(value)
+        assert d.is_blocked, f"Scheme-less private target should be blocked: {value}"
+
+    def test_block_reason_does_not_claim_dns_resolution(self):
+        """The rule checks IP literals and named hosts only — the reason
+        must not say the host 'resolves' anywhere."""
+        d = self._check("http://169.254.169.254/")
+        assert "resolves" not in d.reason
+        assert "private/reserved" in d.reason
+
     # -- Known limitations (NOT caught at URL-parse layer) --
 
     def test_known_limit_url_encoded_host(self):
@@ -198,12 +252,47 @@ class TestSSRFRuleBypassAttempts:
             "This is a known limitation documented in the paper."
         )
 
+    def test_known_limit_hostname_resolving_to_private_ip(self):
+        """
+        Hostname that resolves to a private IP is NOT caught here.
+
+        _is_private_host checks IP literals and named hosts only — it does
+        no DNS resolution. Wildcard-DNS services (nip.io, sslip.io) and
+        attacker-controlled domains can point any hostname at
+        169.254.169.254. Resolving at the relay would not fully close this:
+        the check runs at parse time, before the upstream server connects,
+        so it stays open to DNS rebinding.
+        Mitigation: connection-time IP validation in the MCP server, plus
+        network-level egress controls.
+
+        This test documents the limitation; it does not assert a block.
+        """
+        # 169.254.169.254.nip.io resolves to 169.254.169.254 via public DNS
+        d = self._check("http://169.254.169.254.nip.io/latest/meta-data/")
+        assert d.action == Action.ALLOW, (
+            "Hostname resolving to private IP: relay does no DNS resolution. "
+            "This is a known limitation documented in the paper."
+        )
+
 
 # ---------------------------------------------------------------------------
 # AllowlistRule — unit tests + bypass attempts
 # ---------------------------------------------------------------------------
 
 class TestAllowlistRule:
+    @pytest.mark.parametrize("url", [
+        "file:///etc/passwd",
+        "http://[::1",
+        "http:///admin",
+    ])
+    def test_blocks_url_with_unparseable_host(self, url):
+        """Fail closed: a URL whose host can't be determined can't be
+        shown to be on the allowlist."""
+        rule = AllowlistRule(hosts=["api.example.com"])
+        d = rule.check("fetch", {"url": url})
+        assert d.is_blocked, f"Allowlist should fail closed on: {url}"
+        assert "could not determine host" in d.reason
+
     def test_empty_allowlist_allows_all(self):
         rule = AllowlistRule(hosts=[])
         d = rule.check("fetch", {"url": "https://anything.com/"})
